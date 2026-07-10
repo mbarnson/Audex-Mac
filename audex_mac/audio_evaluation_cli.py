@@ -39,6 +39,13 @@ from .audio_evaluation_xcodec import (
     XCodec1WavDecoder,
     resolve_xcodec1_config,
 )
+from .audio_runtime import preflight_audio_runtime
+from .models import (
+    AUDEX_2B_REPO,
+    AUDEX_30B_NVFP4_REPO,
+    AUDEX_30B_REPO,
+    SUPPORTED_MODELS,
+)
 
 DEFAULT_AUDIO_EVAL_ROOT = Path(".audex/runs/audio-capabilities")
 DEFAULT_AUDIO_EVAL_CACHE = Path(".audex/cache/audio-eval")
@@ -61,6 +68,7 @@ def main(
         Callable[[XCodec1Config | None], Callable[[Any, Path, Any], None]] | None
     ) = None,
     oracle_suite_factory: Callable[[], OracleSuite] | None = None,
+    model_path_resolver: Callable[[str, str], tuple[Path, str]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         description="Prepare or run autonomous Audex audio-capability evaluation"
@@ -81,7 +89,7 @@ def main(
         "--model-path",
         type=Path,
         default=None,
-        help="local Audex checkpoint folder for full evaluation execution",
+        help="override local Audex checkpoint folder for full evaluation execution",
     )
     parser.add_argument(
         "--xcodec1-path",
@@ -105,15 +113,18 @@ def main(
     )
     args = parser.parse_args(argv)
 
+    if args.model == "2b" and args.profile == "nvfp4":
+        parser.error("--profile nvfp4 is only defined for --model 30b")
+
+    model_path = args.model_path
+    model_repo = _repo_for_eval_model(args.model, args.profile)
     if (
         not args.materialize_only
-        and args.model_path is None
-        and runtime_factory is None
+        and model_path is None
+        and (runtime_factory is None or model_path_resolver is not None)
     ):
-        parser.error(
-            "full evaluation execution requires --model-path until eval-specific "
-            "model selection is wired"
-        )
+        active_model_path_resolver = model_path_resolver or _resolve_cached_model_path
+        model_path, model_repo = active_model_path_resolver(args.model, args.profile)
 
     xcodec_config: XCodec1Config | None = None
     if not args.materialize_only and decoder_factory is None:
@@ -165,7 +176,8 @@ def main(
             "model": {
                 "size": args.model,
                 "profile": args.profile,
-                "path": str(args.model_path) if args.model_path is not None else None,
+                "repo_id": model_repo,
+                "path": str(model_path) if model_path is not None else None,
             },
             "generation_oracles": args.generation_oracles,
             "datasets": [
@@ -191,7 +203,7 @@ def main(
     active_oracle_suite_factory = oracle_suite_factory or _oracle_suite_factory(
         args.generation_oracles
     )
-    runtime = active_runtime_factory(args.model_path, args.profile)
+    runtime = active_runtime_factory(model_path, args.profile)
     if decoder_factory is None:
         assert xcodec_config is not None
         decoder = XCodec1WavDecoder(xcodec_config)
@@ -241,3 +253,28 @@ def _oracle_suite_factory(name: str) -> Callable[[], OracleSuite]:
     if name == "unqualified":
         return UnqualifiedOracleSuite
     raise ValueError(f"unknown generation oracle suite: {name}")
+
+
+def _repo_for_eval_model(model: str, profile: str) -> str:
+    if model == "2b":
+        return AUDEX_2B_REPO
+    if model == "30b" and profile == "nvfp4":
+        return AUDEX_30B_NVFP4_REPO
+    if model == "30b":
+        return AUDEX_30B_REPO
+    raise ValueError(
+        f"unsupported eval model selection: model={model} profile={profile}"
+    )
+
+
+def _resolve_cached_model_path(model: str, profile: str) -> tuple[Path, str]:
+    repo_id = _repo_for_eval_model(model, profile)
+    selected = next(item for item in SUPPORTED_MODELS if item.repo_id == repo_id)
+    preflight = preflight_audio_runtime(selected)
+    if preflight.ready and preflight.model_path is not None:
+        return preflight.model_path, repo_id
+    missing = ", ".join(preflight.missing_items) or "unknown missing model files"
+    raise RuntimeError(
+        f"Audex evaluation requires a complete cached speech checkpoint for "
+        f"{repo_id}; missing: {missing}. Pass --model-path to override."
+    )

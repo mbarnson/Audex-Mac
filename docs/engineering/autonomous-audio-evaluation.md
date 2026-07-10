@@ -443,12 +443,14 @@ Current implementation status:
   silence, and clipping; it does not score caption alignment.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
-  pinned manifest/cache preparation. Without `--materialize-only`, it requires
-  an explicit local `--model-path` plus `XCODEC1_PATH` or `--xcodec1-path`, runs
-  the vLLM understanding/generation adapters, decodes raw 16 kHz XCodec WAVs,
-  runs the signal-sanity oracle by default, and writes run artifacts. Semantic
-  generation metrics remain future work; use `--generation-oracles unqualified`
-  to force the previous fail-closed placeholder behavior.
+  pinned manifest/cache preparation. Without `--materialize-only`, it resolves
+  the selected already-cached Audex speech checkpoint, or accepts an explicit
+  `--model-path` override. It still requires `XCODEC1_PATH` or
+  `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes raw
+  16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes run
+  artifacts. Semantic generation metrics remain future work; use
+  `--generation-oracles unqualified` to force the previous fail-closed
+  placeholder behavior.
 
 Relevant current repo contracts:
 
@@ -492,7 +494,7 @@ Current exploratory execution command:
 
 ```sh
 audex-mac eval-audio-capabilities --tier smoke \
-  --model-path /path/to/checkpoint_folder_full \
+  --model 30b --profile nvfp4 \
   --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
 ```
 
@@ -500,6 +502,9 @@ This command can return `CHARACTERIZED` when the local smoke pipeline completes
 and the signal-sanity oracle passes. It does not publish semantic text-to-audio
 quality claims; use it to inspect decoded artifacts and structural/signal
 failures.
+
+Use `--model-path /path/to/checkpoint_folder_full` to override cached-model
+resolution for a local experiment.
 
 Likely future commands, after semantic oracle qualification exists:
 

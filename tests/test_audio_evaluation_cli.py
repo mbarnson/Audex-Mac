@@ -241,14 +241,75 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     assert metric["verdict"] == "PASS"
 
 
-def test_audio_evaluation_cli_execution_requires_explicit_model_path(
+def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     tmp_path: Path,
 ) -> None:
+    rows_by_repo = _smoke_rows()
+    resolved_paths: list[tuple[str, str]] = []
+    runtime_paths: list[Path | None] = []
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        _write_silent_wav(path)
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=0.1,
+        )
+
+    def fake_resolver(model: str, profile: str) -> tuple[Path, str]:
+        resolved_paths.append((model, profile))
+        return tmp_path / "checkpoint_folder_full", "fixture/audex"
+
+    def fake_runtime_factory(model_path: Path | None, profile: str) -> Any:
+        del profile
+        runtime_paths.append(model_path)
+        return FakeAudioEvalRuntime()
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "resolved-model-test",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+        runtime_factory=fake_runtime_factory,
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+        model_path_resolver=fake_resolver,
+    )
+
+    assert exit_code == 0
+    assert resolved_paths == [("30b", "bf16")]
+    assert runtime_paths == [tmp_path / "checkpoint_folder_full"]
+    manifest = json.loads(
+        (tmp_path / "runs" / "resolved-model-test" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["model"]["repo_id"] == "fixture/audex"
+    assert manifest["model"]["path"] == str(tmp_path / "checkpoint_folder_full")
+
+
+def test_audio_evaluation_cli_rejects_nvfp4_2b_selection(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         audio_evaluation_cli.main(
             [
                 "--tier",
                 "smoke",
+                "--model",
+                "2b",
+                "--profile",
+                "nvfp4",
                 "--run-root",
                 str(tmp_path / "runs"),
             ],
