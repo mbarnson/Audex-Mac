@@ -435,11 +435,16 @@ Current implementation status:
   PCM WAV output. Device selection defaults to `auto` (`cuda`, then `mps`, then
   `cpu`); forcing CPU is explicit. XCodec1 weights are not bundled with Audex;
   use a local snapshot of `hf-audio/xcodec-hubert-general-balanced`.
-- Full generation gates still require command wiring from generated codec IDs to
-  `XCodec1WavDecoder`, local oracle qualification, and enhanced 48 kHz output.
 - `audex_mac/audio_evaluation_runner.py` executes cases through those adapters,
   records outputs/metrics, and treats structural, signal, oracle, and
   infrastructure failures as protocol failures.
+- `audex_mac/audio_evaluation_cli.py` exposes
+  `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
+  pinned manifest/cache preparation. Without `--materialize-only`, it requires
+  an explicit local `--model-path` plus `XCODEC1_PATH` or `--xcodec1-path`, runs
+  the vLLM understanding/generation adapters, decodes raw 16 kHz XCodec WAVs,
+  and writes run artifacts. Generation metrics remain `UNSCORED` with a
+  protocol failure until local oracle qualification exists.
 
 Relevant current repo contracts:
 
@@ -479,8 +484,19 @@ Keep evaluator dependencies out of the conversational runtime. A likely split:
 - `openl3-worker`: Python 3.11, OpenL3 0.4.2, TensorFlow 2.13.x, NumPy 1.x,
   librosa, soxr, soundfile, and loudness utilities.
 
-Likely future commands, after the generation runner and oracle qualification
-path exist:
+Current exploratory execution command:
+
+```sh
+audex-mac eval-audio-capabilities --tier smoke \
+  --model-path /path/to/checkpoint_folder_full \
+  --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
+```
+
+This command is expected to return non-zero today because generation oracles are
+not yet qualified. Use it to inspect decoded artifacts and structural/signal
+failures, not to publish pass/fail capability claims.
+
+Likely future commands, after the oracle qualification path exists:
 
 ```sh
 audex-mac eval-audio-capabilities --tier smoke --model 30b

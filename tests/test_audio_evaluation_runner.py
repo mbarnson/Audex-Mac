@@ -18,6 +18,7 @@ from audex_mac.audio_evaluation_runner import (
     GenerationAttempt,
     OracleQualification,
     UnderstandingAttempt,
+    UnqualifiedOracleSuite,
 )
 
 
@@ -196,3 +197,36 @@ def test_runner_marks_structural_failure_as_protocol_failure(tmp_path: Path) -> 
     ).run(run, master_seed=55)
 
     assert summary.verdict is RunVerdict.PROTOCOL_FAIL
+
+
+@pytest.mark.fast
+def test_unqualified_generation_oracle_fails_closed(tmp_path: Path) -> None:
+    case = _generation_case()
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="unqualified-generation",
+        tier="smoke",
+        master_seed=55,
+        cases=(case,),
+        manifest_metadata={},
+    )
+    raw_wav = tmp_path / "raw.wav"
+    raw_wav.write_bytes(b"RIFF-fixture")
+
+    summary = AudioEvaluationRunner(
+        understanding=FakeUnderstandingAdapter(),
+        generation=FakeGenerationAdapter(raw_wav),
+        oracles=UnqualifiedOracleSuite(),
+    ).run(run, master_seed=55)
+
+    assert summary.verdict is RunVerdict.PROTOCOL_FAIL
+    assert "generation_oracles_not_qualified" in summary.protocol_failures
+    assert "required_oracle_qualification_failed" in summary.protocol_failures
+    generation_metric = json.loads(
+        (run.run_dir / "generation" / "metrics.jsonl").read_text()
+    )
+    assert generation_metric == {
+        "case_id": "audiocaps-1",
+        "reason": "oracle_not_qualified",
+        "verdict": "UNSCORED",
+    }

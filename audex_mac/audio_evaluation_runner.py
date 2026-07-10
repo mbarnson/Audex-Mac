@@ -62,6 +62,26 @@ class OracleSuite(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class UnqualifiedOracleSuite:
+    """Generation oracle placeholder that fails closed until local oracles exist."""
+
+    reason: str = "generation_oracles_not_qualified"
+
+    def qualify(self) -> OracleQualification:
+        return OracleQualification(
+            qualified=False,
+            oracle_results={"status": self.reason},
+            failures=(self.reason,),
+        )
+
+    def score(
+        self, case: AudioEvaluationCase, attempt: GenerationAttempt
+    ) -> Mapping[str, Any]:
+        del case, attempt
+        return {"verdict": "UNSCORED", "reason": self.reason}
+
+
 class AudioEvaluationRunner:
     """Execute isolated cases while keeping model/oracle implementations hidden."""
 
