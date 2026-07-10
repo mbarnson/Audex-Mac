@@ -83,11 +83,9 @@ class AudexVllmTtaGenerationAdapter:
         runtime: Any,
         raw_dir: Path,
         decode_to_wav: Callable[[TtaOutputInspection, Path, AudioEvaluationCase], None],
-        enhanced_dir: Path | None = None,
     ) -> None:
         self._runtime = runtime
         self._raw_dir = raw_dir
-        self._enhanced_dir = enhanced_dir
         self._decode_to_wav = decode_to_wav
 
     def generate(
@@ -118,7 +116,7 @@ class AudexVllmTtaGenerationAdapter:
             raw_wav_path.write_bytes(b"")
         return GenerationAttempt(
             raw_wav_path=raw_wav_path,
-            enhanced_wav_path=None if self._enhanced_dir is None else None,
+            enhanced_wav_path=None,
             structure=inspection,
             signal_metrics=_signal_metrics(raw_wav_path),
             elapsed_seconds=cond_result.elapsed_seconds,

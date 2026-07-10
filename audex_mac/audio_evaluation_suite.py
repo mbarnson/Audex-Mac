@@ -97,7 +97,7 @@ def build_smoke_cases_from_rows(
             row_id=lambda row: str(row.get("caption_id", row.get("track_id", ""))),
         )
 
-    esc_foils = _foil_by_category(esc50_rows)
+    esc_foils = _placeholder_foil_by_category(esc50_rows)
     cases: list[AudioEvaluationCase] = []
     cases.extend(
         build_mmau_cases(
@@ -163,7 +163,11 @@ def _select_rows(
     )
 
 
-def _foil_by_category(rows: tuple[Mapping[str, Any], ...]) -> dict[str, str]:
+def _placeholder_foil_by_category(
+    rows: tuple[Mapping[str, Any], ...],
+) -> dict[str, str]:
+    """Return a deterministic smoke foil map; standard/full need semantic foils."""
+
     categories = sorted(
         {
             str(row.get("category", "")).strip().lower()

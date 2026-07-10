@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 from .audio_encoder import run_audio_encoder_smoke
+from .audio_evaluation_cli import main as run_audio_evaluation_cli
 from .audio_features import extract_audex_input_features
 from .audio_pcm import prepare_audex_pcm_clips, prepare_audex_wav_clips
 from .audio_projector import run_audio_projector_smoke
@@ -80,6 +82,10 @@ def _model_size_notice(model: AudexModel) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv[:1] == ["eval-audio-capabilities"]:
+        return run_audio_evaluation_cli(raw_argv[1:])
+
     parser = argparse.ArgumentParser(description="Audex-Mac local speech demo")
     parser.add_argument("--thinking", action="store_true", help="allow thinking mode")
     parser.add_argument(
@@ -365,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="approve downloading the selected Audex model if it is missing",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
     if (
         args.diagnose_vllm_sts_speech_max_tokens is not None
         and args.diagnose_vllm_sts_speech_max_tokens <= 0
