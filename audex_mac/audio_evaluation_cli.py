@@ -255,6 +255,17 @@ def main(
                 "repo_id": model_repo,
                 "path": str(model_path) if model_path is not None else None,
                 "snapshot_revision": _hf_snapshot_revision(model_path),
+                "file_hashes": _small_file_hashes(
+                    model_path,
+                    (
+                        "config.json",
+                        "generation_config.json",
+                        "tokenizer.json",
+                        "tokenizer_config.json",
+                        "chat_template.jinja",
+                        "audio_preprocessor/preprocessor_config.json",
+                    ),
+                ),
                 "context": _model_context_payload(args.model, model_path),
             },
             "understanding_protocol": {
@@ -392,6 +403,10 @@ def _environment_payload(
                     "path": str(xcodec_config.path),
                     "path_exists": xcodec_config.path.exists(),
                     "snapshot_revision": _hf_snapshot_revision(xcodec_config.path),
+                    "file_hashes": _small_file_hashes(
+                        xcodec_config.path,
+                        ("config.json",),
+                    ),
                     "device": xcodec_config.device,
                 }
                 if xcodec_config is not None
@@ -443,6 +458,37 @@ def _model_card_max_context(model_size: str) -> int | None:
     if model_size == "2b":
         return 128_000
     return None
+
+
+def _small_file_hashes(
+    root: Path | None,
+    relative_paths: tuple[str, ...],
+    *,
+    max_bytes: int = 50_000_000,
+) -> dict[str, dict[str, Any]]:
+    if root is None:
+        return {}
+    hashes: dict[str, dict[str, Any]] = {}
+    for relative_path in relative_paths:
+        path = root / relative_path
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if not path.is_file():
+            continue
+        if stat.st_size > max_bytes:
+            hashes[relative_path] = {
+                "bytes": stat.st_size,
+                "sha256": None,
+                "skipped": "file_too_large",
+            }
+            continue
+        hashes[relative_path] = {
+            "bytes": stat.st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    return hashes
 
 
 def _checkpoint_declared_context(model_path: Path | None) -> int | None:

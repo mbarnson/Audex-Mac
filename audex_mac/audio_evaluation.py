@@ -91,6 +91,7 @@ class AudioEvaluationSummary:
     balanced_accuracy: float | None
     binary_rates: Mapping[str, Any]
     generation: Mapping[str, Any]
+    technical_failures: Mapping[str, Any]
     diagnostics: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
 
@@ -349,6 +350,10 @@ class AudioEvaluationRun:
             balanced_accuracy=_balanced_accuracy(understanding_by_category),
             binary_rates=_binary_rates(self.cases, outputs_by_case_id),
             generation=_generation_summary(self.cases, outputs_by_case_id),
+            technical_failures=_technical_failure_summary(
+                self.cases,
+                outputs_by_case_id,
+            ),
             diagnostics=_diagnostics_summary(self.cases, outputs_by_case_id),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
         )
@@ -568,6 +573,49 @@ def _generation_summary(
         ),
         "structural_failures": dict(sorted(structural_failures.items())),
         "signal_failures": dict(sorted(signal_failures.items())),
+    }
+
+
+def _technical_failure_summary(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    by_track = {
+        track.value: {
+            "completed_cases": 0,
+            "technical_failures": 0,
+            "technical_failure_rate": None,
+        }
+        for track in EvaluationTrack
+    }
+    failures: dict[str, str] = {}
+    completed_cases = 0
+    for case in cases:
+        output = outputs_by_case_id.get(case.case_id)
+        if output is None:
+            continue
+        completed_cases += 1
+        track_summary = by_track[case.track.value]
+        track_summary["completed_cases"] += 1
+        failure = output.get("technical_failure")
+        if failure is None:
+            continue
+        failures[case.case_id] = str(failure)
+        track_summary["technical_failures"] += 1
+    for track_summary in by_track.values():
+        track_completed = int(track_summary["completed_cases"])
+        if track_completed:
+            track_summary["technical_failure_rate"] = (
+                int(track_summary["technical_failures"]) / track_completed
+            )
+    return {
+        "completed_cases": completed_cases,
+        "technical_failures": len(failures),
+        "technical_failure_rate": (
+            len(failures) / completed_cases if completed_cases else None
+        ),
+        "by_track": by_track,
+        "failures": dict(sorted(failures.items())),
     }
 
 

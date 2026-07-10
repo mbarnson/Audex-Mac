@@ -280,6 +280,24 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         "structurally_valid": 0,
         "total_cases": 1,
     }
+    assert payload["technical_failures"] == {
+        "by_track": {
+            "generation": {
+                "completed_cases": 1,
+                "technical_failure_rate": 0.0,
+                "technical_failures": 0,
+            },
+            "understanding": {
+                "completed_cases": 5,
+                "technical_failure_rate": 0.0,
+                "technical_failures": 0,
+            },
+        },
+        "completed_cases": 6,
+        "failures": {},
+        "technical_failure_rate": 0.0,
+        "technical_failures": 0,
+    }
     assert payload["diagnostics"]["elapsed_seconds_total"] == 10.0
     assert payload["diagnostics"]["cases_per_second"] == 0.6
     assert (

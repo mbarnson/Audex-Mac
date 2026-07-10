@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -623,6 +624,7 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     rows_by_repo = _smoke_rows()
     resolved_paths: list[tuple[str, str]] = []
     runtime_paths: list[Path | None] = []
+    config_text = json.dumps({"max_position_embeddings": 131_072})
 
     def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
         del client
@@ -643,8 +645,9 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
         resolved_paths.append((model, profile))
         checkpoint = tmp_path / "checkpoint_folder_full"
         checkpoint.mkdir()
-        (checkpoint / "config.json").write_text(
-            json.dumps({"max_position_embeddings": 131_072}),
+        (checkpoint / "config.json").write_text(config_text, encoding="utf-8")
+        (checkpoint / "tokenizer_config.json").write_text(
+            json.dumps({"model_max_length": 131_072}),
             encoding="utf-8",
         )
         return checkpoint, "fixture/audex"
@@ -680,6 +683,11 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     )
     assert manifest["model"]["repo_id"] == "fixture/audex"
     assert manifest["model"]["path"] == str(tmp_path / "checkpoint_folder_full")
+    assert manifest["model"]["file_hashes"]["config.json"] == {
+        "bytes": len(config_text.encode("utf-8")),
+        "sha256": hashlib.sha256(config_text.encode("utf-8")).hexdigest(),
+    }
+    assert manifest["model"]["file_hashes"]["tokenizer_config.json"]["bytes"] > 0
     assert manifest["model"]["context"] == {
         "checkpoint_max_position_embeddings": 131_072,
         "configured_demo_max_tokens": 262144,

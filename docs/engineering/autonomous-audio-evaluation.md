@@ -423,7 +423,8 @@ Current implementation status:
   accuracy, invalid response rate, per-category understanding accuracy,
   balanced accuracy, YES/NO false-positive and false-negative rates,
   deterministic bootstrap confidence intervals for accuracy, generation
-  structural/signal failure counts, and per-track timing/throughput diagnostics.
+  structural/signal failure counts, technical failure rates, and per-track
+  timing/throughput diagnostics.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
@@ -460,12 +461,13 @@ Current implementation status:
   accepts an explicit `--model-path` override. It still requires `XCODEC1_PATH`
   or `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes
   raw 16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes
-  run artifacts. The smoke/standard manifest/environment records model
+  run artifacts. The smoke/standard/full manifest/environment records model
   selection, Hugging Face snapshot revisions when paths expose them, model-card
-  and configured engine context limits, the pinned CFG3 TTA recipe,
-  constrained-answer scoring protocol, dataset pins/omissions, git commit and
-  dirty diff hash, host metadata, and key dependency versions without recording
-  credentials. Semantic generation metrics remain future work; use
+  and configured engine context limits, small model/decoder config file hashes,
+  the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
+  pins/omissions, git commit and dirty diff hash, host metadata, and key
+  dependency versions without recording credentials. Semantic generation metrics
+  remain future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior.
 
