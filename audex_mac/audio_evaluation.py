@@ -86,6 +86,7 @@ class AudioEvaluationSummary:
     case_completeness: float
     accuracy: float | None
     invalid_response_rate: float | None
+    confidence_intervals: Mapping[str, Any]
     understanding_by_category: Mapping[str, Mapping[str, Any]]
     balanced_accuracy: float | None
     generation: Mapping[str, Any]
@@ -332,6 +333,7 @@ class AudioEvaluationRun:
             case_completeness=len(self._completed_case_ids) / len(self.cases),
             accuracy=accuracy,
             invalid_response_rate=invalid_rate,
+            confidence_intervals=_confidence_intervals(scored),
             understanding_by_category=understanding_by_category,
             balanced_accuracy=_balanced_accuracy(understanding_by_category),
             generation=_generation_summary(self.cases, outputs_by_case_id),
@@ -417,6 +419,51 @@ def _balanced_accuracy(
         if summary.get("accuracy") is not None
     ]
     return sum(accuracies) / len(accuracies) if accuracies else None
+
+
+def _confidence_intervals(scored_outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    accuracy_ci = _bootstrap_accuracy_ci(scored_outputs)
+    return {"accuracy": accuracy_ci} if accuracy_ci is not None else {}
+
+
+def _bootstrap_accuracy_ci(
+    scored_outputs: list[dict[str, Any]],
+    *,
+    samples: int = 2000,
+    confidence: float = 0.95,
+) -> dict[str, Any] | None:
+    values = [
+        1.0 if bool(output.get("correct", False)) else 0.0 for output in scored_outputs
+    ]
+    if not values:
+        return None
+    if samples <= 0:
+        raise ValueError("bootstrap samples must be positive")
+    seed_material = "|".join(
+        f"{output.get('case_id')}={int(bool(output.get('correct', False)))}"
+        for output in sorted(scored_outputs, key=lambda item: str(item.get("case_id")))
+    )
+    n = len(values)
+    estimates: list[float] = []
+    for sample_index in range(samples):
+        total = 0.0
+        for draw_index in range(n):
+            digest = hashlib.sha256(
+                f"{seed_material}\0{sample_index}\0{draw_index}".encode()
+            ).digest()
+            total += values[int.from_bytes(digest[:8], "big") % n]
+        estimates.append(total / n)
+    estimates.sort()
+    alpha = 1.0 - confidence
+    lower_index = int((alpha / 2.0) * (samples - 1))
+    upper_index = int((1.0 - alpha / 2.0) * (samples - 1))
+    return {
+        "method": "deterministic_nonparametric_bootstrap",
+        "confidence": confidence,
+        "samples": samples,
+        "lower": estimates[lower_index],
+        "upper": estimates[upper_index],
+    }
 
 
 def _generation_summary(

@@ -217,6 +217,12 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         "valid_responses": 2,
     }
     assert payload["understanding_by_category"]["music"]["invalid_response_rate"] == 1.0
+    accuracy_ci = payload["confidence_intervals"]["accuracy"]
+    assert accuracy_ci["method"] == "deterministic_nonparametric_bootstrap"
+    assert accuracy_ci["samples"] == 2000
+    assert (
+        0.0 <= accuracy_ci["lower"] <= summary.accuracy <= accuracy_ci["upper"] <= 1.0
+    )
     assert payload["generation"] == {
         "completed_cases": 1,
         "signal_failures": {"clipped_waveform": 1},
