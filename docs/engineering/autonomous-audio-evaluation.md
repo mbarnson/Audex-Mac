@@ -420,9 +420,9 @@ Current implementation status:
   constrained-answer scoring, append-only artifacts, summary verdicts, and
   credential rejection. Current summaries report overall constrained-answer
   accuracy, invalid response rate, per-category understanding accuracy,
-  balanced accuracy, deterministic bootstrap confidence intervals for accuracy,
-  generation structural/signal failure counts, and per-track timing/throughput
-  diagnostics.
+  balanced accuracy, YES/NO false-positive and false-negative rates,
+  deterministic bootstrap confidence intervals for accuracy, generation
+  structural/signal failure counts, and per-track timing/throughput diagnostics.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
@@ -445,7 +445,8 @@ Current implementation status:
   infrastructure failures as protocol failures.
 - `audex_mac/audio_evaluation_oracles.py` contains a smoke-tier signal sanity
   oracle with deterministic self-tests. It gates finite/nonempty duration,
-  silence, and clipping; it does not score caption alignment.
+  silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
+  it does not score caption alignment.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and

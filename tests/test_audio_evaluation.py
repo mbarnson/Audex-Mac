@@ -52,6 +52,25 @@ def _generation_case(case_id: str, category: str = "audiocaps") -> AudioEvaluati
     )
 
 
+def _yes_no_case(case_id: str, expected: str) -> AudioEvaluationCase:
+    return AudioEvaluationCase(
+        case_id=case_id,
+        track=EvaluationTrack.UNDERSTANDING,
+        dataset_id="fixture/binary",
+        dataset_revision="abc123",
+        dataset_config="default",
+        dataset_split="test",
+        source_row_id=case_id,
+        source_row_hash=f"hash-{case_id}",
+        license="CC0-1.0",
+        category="binary",
+        prompt="Does this recording contain a dog? Return only YES or NO.",
+        expected_answer=expected,
+        audio_path=f"/cache/{case_id}.wav",
+        choices=("YES", "NO"),
+    )
+
+
 @pytest.mark.fast
 def test_stratified_selection_is_balanced_stable_and_order_independent() -> None:
     cases = tuple(
@@ -150,6 +169,8 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         _case("sound-1", "sound"),
         _case("sound-2", "sound"),
         _case("music-1", "music"),
+        _yes_no_case("binary-positive", "YES"),
+        _yes_no_case("binary-negative", "NO"),
         _generation_case("audiocaps-1"),
     )
     run = AudioEvaluationRun.create(
@@ -189,6 +210,26 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         },
     )
     run.record_output(
+        case_id="binary-positive",
+        payload={
+            "raw_answer": "NO",
+            "normalized_answer": "NO",
+            "valid": True,
+            "correct": False,
+            "elapsed_seconds": 1.0,
+        },
+    )
+    run.record_output(
+        case_id="binary-negative",
+        payload={
+            "raw_answer": "YES",
+            "normalized_answer": "YES",
+            "valid": True,
+            "correct": False,
+            "elapsed_seconds": 1.0,
+        },
+    )
+    run.record_output(
         case_id="audiocaps-1",
         payload={
             "structurally_valid": False,
@@ -205,8 +246,8 @@ def test_run_summary_reports_category_and_generation_breakdowns(
 
     summary = run.finalize(required_oracles_qualified=True)
 
-    assert summary.accuracy == pytest.approx(1 / 3)
-    assert summary.balanced_accuracy == pytest.approx(0.25)
+    assert summary.accuracy == pytest.approx(1 / 5)
+    assert summary.balanced_accuracy == pytest.approx(1 / 6)
     payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
     assert payload["understanding_by_category"]["sound"] == {
         "accuracy": 0.5,
@@ -223,6 +264,15 @@ def test_run_summary_reports_category_and_generation_breakdowns(
     assert (
         0.0 <= accuracy_ci["lower"] <= summary.accuracy <= accuracy_ci["upper"] <= 1.0
     )
+    assert payload["binary_rates"] == {
+        "completed_cases": 2,
+        "false_negative_rate": 1.0,
+        "false_negatives": 1,
+        "false_positive_rate": 1.0,
+        "false_positives": 1,
+        "negative_cases": 1,
+        "positive_cases": 1,
+    }
     assert payload["generation"] == {
         "completed_cases": 1,
         "signal_failures": {"clipped_waveform": 1},
@@ -230,8 +280,8 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         "structurally_valid": 0,
         "total_cases": 1,
     }
-    assert payload["diagnostics"]["elapsed_seconds_total"] == 8.0
-    assert payload["diagnostics"]["cases_per_second"] == 0.5
+    assert payload["diagnostics"]["elapsed_seconds_total"] == 10.0
+    assert payload["diagnostics"]["cases_per_second"] == 0.6
     assert (
         payload["diagnostics"]["by_track"]["understanding"]["elapsed_seconds_mean"]
         == 1.0

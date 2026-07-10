@@ -180,7 +180,7 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     ) -> None:
         del case
         decoded.append(inspection)
-        destination.write_bytes(b"RIFF generated")
+        _write_tone_wav(destination)
 
     attempt = AudexVllmTtaGenerationAdapter(
         runtime=runtime,
@@ -193,8 +193,11 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert runtime.requests[0].sampling.extra_args["cfg_role"] == "cond"
     assert runtime.requests[1].sampling.extra_args["cfg_role"] == "uncond"
     assert decoded[0].valid is True
-    assert attempt.raw_wav_path.read_bytes() == b"RIFF generated"
+    assert attempt.raw_wav_path.is_file()
     assert attempt.signal_metrics["nonempty"] is True
+    assert attempt.signal_metrics["rms"] > 0.0
+    assert abs(attempt.signal_metrics["dc_offset"]) < 0.01
+    assert attempt.signal_metrics["sample_delta_peak"] > 0.0
     assert attempt.finish_reason == "stop"
 
 
@@ -222,3 +225,18 @@ def _write_silent_wav(path: Path) -> None:
         wav.setsampwidth(2)
         wav.setframerate(16_000)
         wav.writeframes(b"\x00\x00" * 1600)
+
+
+def _write_tone_wav(path: Path) -> None:
+    import math
+    import wave
+
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        frames = bytearray()
+        for index in range(1600):
+            sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / 16_000))
+            frames.extend(sample.to_bytes(2, "little", signed=True))
+        wav.writeframes(bytes(frames))

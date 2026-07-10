@@ -89,6 +89,7 @@ class AudioEvaluationSummary:
     confidence_intervals: Mapping[str, Any]
     understanding_by_category: Mapping[str, Mapping[str, Any]]
     balanced_accuracy: float | None
+    binary_rates: Mapping[str, Any]
     generation: Mapping[str, Any]
     diagnostics: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
@@ -336,6 +337,7 @@ class AudioEvaluationRun:
             confidence_intervals=_confidence_intervals(scored),
             understanding_by_category=understanding_by_category,
             balanced_accuracy=_balanced_accuracy(understanding_by_category),
+            binary_rates=_binary_rates(self.cases, outputs_by_case_id),
             generation=_generation_summary(self.cases, outputs_by_case_id),
             diagnostics=_diagnostics_summary(self.cases, outputs_by_case_id),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
@@ -424,6 +426,55 @@ def _balanced_accuracy(
 def _confidence_intervals(scored_outputs: list[dict[str, Any]]) -> dict[str, Any]:
     accuracy_ci = _bootstrap_accuracy_ci(scored_outputs)
     return {"accuracy": accuracy_ci} if accuracy_ci is not None else {}
+
+
+def _binary_rates(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    positive_cases = 0
+    negative_cases = 0
+    false_positives = 0
+    false_negatives = 0
+    completed_cases = 0
+    for case in cases:
+        choices = {choice.upper() for choice in case.choices}
+        if (
+            case.track is not EvaluationTrack.UNDERSTANDING
+            or choices != {"YES", "NO"}
+            or case.expected_answer is None
+        ):
+            continue
+        expected = case.expected_answer.strip().upper()
+        if expected not in {"YES", "NO"}:
+            continue
+        output = outputs_by_case_id.get(case.case_id)
+        if output is None:
+            continue
+        completed_cases += 1
+        normalized = output.get("normalized_answer")
+        answer = str(normalized).strip().upper() if normalized is not None else None
+        if expected == "YES":
+            positive_cases += 1
+            if answer != "YES":
+                false_negatives += 1
+        else:
+            negative_cases += 1
+            if answer == "YES":
+                false_positives += 1
+    return {
+        "completed_cases": completed_cases,
+        "positive_cases": positive_cases,
+        "negative_cases": negative_cases,
+        "false_positives": false_positives,
+        "false_negatives": false_negatives,
+        "false_positive_rate": (
+            false_positives / negative_cases if negative_cases else None
+        ),
+        "false_negative_rate": (
+            false_negatives / positive_cases if positive_cases else None
+        ),
+    }
 
 
 def _bootstrap_accuracy_ci(

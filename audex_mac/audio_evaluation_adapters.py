@@ -144,6 +144,19 @@ def _signal_metrics(path: Path) -> Mapping[str, Any]:
     values = tuple(float(sample) for sample in loaded.samples)
     finite = all(math.isfinite(sample) for sample in values)
     peak = max((abs(sample) for sample in values), default=0.0)
+    rms = (
+        math.sqrt(sum(sample * sample for sample in values) / len(values))
+        if values
+        else 0.0
+    )
+    dc_offset = sum(values) / len(values) if values else 0.0
+    sample_delta_peak = max(
+        (
+            abs(current - previous)
+            for previous, current in zip(values, values[1:], strict=False)
+        ),
+        default=0.0,
+    )
     metrics.update(
         {
             "finite": finite,
@@ -153,6 +166,9 @@ def _signal_metrics(path: Path) -> Mapping[str, Any]:
                 len(values) / loaded.sample_rate if loaded.sample_rate else 0.0
             ),
             "peak": peak,
+            "rms": rms,
+            "dc_offset": dc_offset,
+            "sample_delta_peak": sample_delta_peak,
             "clipped": peak >= 0.999,
         }
     )
