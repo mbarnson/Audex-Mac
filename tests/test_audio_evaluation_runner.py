@@ -277,3 +277,42 @@ def test_runner_promotes_oracle_protocol_failures(tmp_path: Path) -> None:
 
     assert summary.verdict is RunVerdict.PROTOCOL_FAIL
     assert "audiocaps-1: audible_peak" in summary.protocol_failures
+
+
+@pytest.mark.fast
+def test_runner_reports_technical_failure_rate(tmp_path: Path) -> None:
+    case = _generation_case()
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="technical-failure",
+        tier="smoke",
+        master_seed=55,
+        cases=(case,),
+        manifest_metadata={},
+    )
+
+    class ExplodingGenerationAdapter:
+        def generate(
+            self, selected_case: AudioEvaluationCase, *, seed: int
+        ) -> GenerationAttempt:
+            del selected_case, seed
+            raise RuntimeError("decoder exploded")
+
+    summary = AudioEvaluationRunner(
+        understanding=FakeUnderstandingAdapter(),
+        generation=ExplodingGenerationAdapter(),
+        oracles=FakeOracleSuite(),
+    ).run(run, master_seed=55)
+
+    assert summary.verdict is RunVerdict.PROTOCOL_FAIL
+    payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
+    assert payload["technical_failures"]["technical_failure_rate"] == 1.0
+    assert payload["technical_failures"]["by_track"]["generation"] == {
+        "completed_cases": 1,
+        "technical_failure_rate": 1.0,
+        "technical_failures": 1,
+    }
+    assert (
+        "RuntimeError: decoder exploded"
+        in payload["technical_failures"]["failures"][case.case_id]
+    )
