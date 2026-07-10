@@ -423,7 +423,7 @@ def _oracle_registry_payload() -> dict[str, Any]:
             "semantic_caption_alignment": False,
         },
         "clap": {
-            "status": "planned_worker_boundary",
+            "status": "implemented_worker_boundary_unqualified",
             "repo_id": CLAP_REPO_ID,
             "revision": CLAP_REVISION,
             "purpose": "caption_alignment_and_retrieval_diagnostics",
@@ -434,7 +434,7 @@ def _oracle_registry_payload() -> dict[str, Any]:
             },
         },
         "ast": {
-            "status": "planned_worker_boundary",
+            "status": "implemented_worker_boundary_unqualified",
             "repo_id": AST_REPO_ID,
             "revision": AST_REVISION,
             "purpose": "audioset_event_sanity_diagnostics",

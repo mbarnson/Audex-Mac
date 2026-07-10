@@ -14,6 +14,7 @@ from audex_mac.audio_evaluation_ast import (
     load_ast_worker_result,
     write_ast_worker_request,
 )
+from audex_mac.audio_evaluation_ast_backend import require_torch_device
 from audex_mac.audio_evaluation_ast_labels import (
     PINNED_AST_LABEL_FIXTURE_VOCABULARY,
     STRUCTURED_CONTROL_AST_LABELS,
@@ -228,6 +229,12 @@ def test_ast_worker_rejects_invalid_request_schema(
         json.dumps(
             {
                 "schema_version": 1,
+                "run_id": "invalid-run",
+                "model": {
+                    "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
+                    "revision": AST_REVISION,
+                },
+                "logit_policy": "sigmoid_raw_logits",
                 "requests": [
                     {
                         "case_id": "bad",
@@ -256,3 +263,133 @@ def test_ast_worker_rejects_invalid_request_schema(
     assert payload["status"] == "PROTOCOL_FAIL"
     assert payload["reason"] == "invalid_ast_request"
     assert "overlap" in payload["detail"]
+
+
+def test_ast_worker_scores_expected_and_forbidden_event_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    output_path = tmp_path / "result.json"
+    dog_wav = tmp_path / "dog.wav"
+    speech_wav = tmp_path / "speech.wav"
+    dog_wav.write_bytes(b"RIFF dog")
+    speech_wav.write_bytes(b"RIFF speech")
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "fixture-run",
+                "model": {
+                    "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
+                    "revision": AST_REVISION,
+                },
+                "logit_policy": "sigmoid_raw_logits",
+                "requests": [
+                    {
+                        "case_id": "dog",
+                        "generated_wav_path": str(dog_wav),
+                        "expected_labels": ["Dog", "Bark"],
+                        "forbidden_labels": ["Speech"],
+                    },
+                    {
+                        "case_id": "speech",
+                        "generated_wav_path": str(speech_wav),
+                        "expected_labels": ["Dog"],
+                        "forbidden_labels": ["Speech"],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBackend:
+        labels = frozenset(("Dog", "Bark", "Speech", "Music"))
+        model_load_seconds = 0.25
+
+        def classify_audio(
+            self,
+            paths: list[Path],
+        ) -> tuple[list[dict[str, float]], float, float]:
+            assert paths == [dog_wav, speech_wav]
+            return (
+                [
+                    {"Dog": 0.91, "Bark": 0.72, "Speech": 0.02, "Music": 0.01},
+                    {"Dog": 0.03, "Bark": 0.01, "Speech": 0.88, "Music": 0.02},
+                ],
+                0.30,
+                0.40,
+            )
+
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_ast_worker._missing_modules",
+        lambda _names: (),
+    )
+
+    exit_code = run_worker(
+        request_path=request_path,
+        output_path=output_path,
+        device="mps",
+        backend_factory=lambda **_kwargs: FakeBackend(),
+    )
+
+    assert exit_code == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "UNSCORED"
+    assert payload["reason"] == "ast_oracle_not_qualified"
+    assert payload["qualification"] == {
+        "qualified": False,
+        "status": "NOT_RUN",
+    }
+    assert payload["model"] == {
+        "device": "mps",
+        "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
+        "revision": AST_REVISION,
+    }
+    assert payload["logit_policy"] == "sigmoid_raw_logits"
+    assert payload["metrics"] == {
+        "expected_label_cases": 2,
+        "expected_label_hit_rate": 0.5,
+        "forbidden_label_cases": 2,
+        "forbidden_label_false_positive_rate": 0.5,
+    }
+    assert payload["per_case"][0] == {
+        "case_id": "dog",
+        "expected_label_hit": True,
+        "expected_label_scores": {"Bark": 0.72, "Dog": 0.91},
+        "forbidden_label_false_positive": False,
+        "forbidden_label_scores": {"Speech": 0.02},
+        "top_labels": [
+            {"label": "Dog", "probability": 0.91},
+            {"label": "Bark", "probability": 0.72},
+            {"label": "Speech", "probability": 0.02},
+            {"label": "Music", "probability": 0.01},
+        ],
+    }
+    assert payload["per_case"][1]["expected_label_hit"] is False
+    assert payload["per_case"][1]["forbidden_label_false_positive"] is True
+    assert payload["timings"] == {
+        "inference_seconds": 0.4,
+        "model_load_seconds": 0.25,
+        "preprocessing_seconds": 0.3,
+    }
+
+
+def test_ast_backend_requires_the_explicit_accelerator() -> None:
+    class Availability:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class FakeTorch:
+        cuda = Availability()
+
+        class backends:
+            mps = Availability()
+
+    with pytest.raises(RuntimeError, match="MPS.*not available"):
+        require_torch_device(FakeTorch(), "mps")
+    with pytest.raises(RuntimeError, match="CUDA.*not available"):
+        require_torch_device(FakeTorch(), "cuda")
+    assert require_torch_device(FakeTorch(), "cpu") == "cpu"

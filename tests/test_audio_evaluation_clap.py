@@ -293,9 +293,14 @@ def test_clap_worker_scores_alignment_foils_and_retrieval(
         backend_factory=lambda **_kwargs: FakeBackend(),
     )
 
-    assert exit_code == 0
+    assert exit_code == 2
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert payload["status"] == "PASS"
+    assert payload["status"] == "UNSCORED"
+    assert payload["reason"] == "clap_oracle_not_qualified"
+    assert payload["qualification"] == {
+        "qualified": False,
+        "status": "NOT_RUN",
+    }
     assert payload["model"] == {
         "repo_id": "laion/clap-htsat-unfused",
         "revision": CLAP_REVISION,

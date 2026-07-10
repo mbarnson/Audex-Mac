@@ -87,7 +87,12 @@ def run_worker(
         output_path,
         {
             "schema_version": 1,
-            "status": "PASS",
+            "status": "UNSCORED",
+            "reason": "clap_oracle_not_qualified",
+            "qualification": {
+                "qualified": False,
+                "status": "NOT_RUN",
+            },
             "model": {
                 "repo_id": CLAP_REPO_ID,
                 "revision": CLAP_REVISION,
@@ -96,7 +101,7 @@ def run_worker(
             **result,
         },
     )
-    return 0
+    return 2
 
 
 def _evaluate(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:

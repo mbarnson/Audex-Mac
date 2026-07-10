@@ -142,9 +142,15 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     assert manifest["generation_recipe"]["name"] == "audex_tta_cfg3_xcodec1"
     assert manifest["generation_recipe"]["cfg_scale"] == 3.0
     assert manifest["oracle_registry"]["signal"]["status"] == "implemented"
-    assert manifest["oracle_registry"]["clap"]["status"] == "planned_worker_boundary"
+    assert (
+        manifest["oracle_registry"]["clap"]["status"]
+        == "implemented_worker_boundary_unqualified"
+    )
     assert manifest["oracle_registry"]["clap"]["repo_id"] == "laion/clap-htsat-unfused"
-    assert manifest["oracle_registry"]["ast"]["status"] == "planned_worker_boundary"
+    assert (
+        manifest["oracle_registry"]["ast"]["status"]
+        == "implemented_worker_boundary_unqualified"
+    )
     assert (
         manifest["oracle_registry"]["ast"]["revision"]
         == "f826b80d28226b62986cc218e5cec390b1096902"

@@ -487,17 +487,25 @@ Current implementation status:
   captions. The worker loads the pinned LAION CLAP checkpoint through
   Transformers, requires an explicit available device (`cpu`, `mps`, or
   `cuda`), computes per-case metrics, and records model/preprocess/inference
-  timing. CLAP oracle qualification and calibrated capability thresholds remain
-  future work.
-- `audex_mac/audio_evaluation_ast.py` and
+  timing. Until the fixed ESC-50 qualification gate exists, successful worker
+  computations deliberately return `UNSCORED` with the diagnostic metrics
+  attached; they are not capability evidence. CLAP oracle qualification and
+  calibrated capability thresholds remain future work.
+- `audex_mac/audio_evaluation_ast.py`,
+  `audex_mac/audio_evaluation_ast_backend.py`, and
   `audex_mac/audio_evaluation_ast_worker.py` define the isolated AST worker
   request/command/result boundary for AudioSet-style event sanity checks. The
   request contract requires explicit expected and optional forbidden labels per
   generated WAV rather than deriving labels from captions implicitly.
   `audex_mac/audio_evaluation_ast_labels.py` provides explicit AST labels for
-  the local structured-control prompts only. The worker currently fails loud
-  with `UNSCORED`; pinned label-map validation, calibration, and scoring remain
-  future work.
+  the local structured-control prompts only. The worker loads the pinned AST
+  checkpoint through Transformers, validates requested labels against the
+  checkpoint label map, applies sigmoid over raw logits, emits per-case
+  expected-label and forbidden-label diagnostics, and records
+  model/preprocess/inference timing. Because AST calibration is not complete,
+  the worker marks these diagnostics `UNSCORED` rather than presenting them as
+  a qualified oracle result. AST oracle qualification and calibrated label
+  thresholds remain future work.
 - `audex_mac/audio_evaluation_openl3.py` and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
   worker request/command/result boundary and fail loudly outside Python 3.11 or
@@ -521,12 +529,12 @@ Current implementation status:
   selection, Hugging Face snapshot revisions when paths expose them, model-card
   and configured engine context limits, small model/decoder config file hashes,
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
-  pins/omissions, planned CLAP/AST/OpenL3 oracle identities and qualification
-  gates, git commit and dirty diff hash, host metadata, and key dependency
-  versions without recording credentials. CLAP caption-alignment scoring exists
-  behind the isolated worker boundary, but semantic generation oracle
-  qualification is not complete; use `--generation-oracles unqualified` to
-  force the previous fail-closed placeholder behavior. Standard/Full
+  pins/omissions, CLAP/AST/OpenL3 oracle identities and qualification gates,
+  git commit and dirty diff hash, host metadata, and key dependency versions
+  without recording credentials. CLAP caption-alignment and AST event-sanity
+  scoring exist behind isolated worker boundaries, but semantic generation
+  oracle qualification is not complete; use `--generation-oracles unqualified`
+  to force the previous fail-closed placeholder behavior. Standard/Full
   materialization writes
   `generation/openl3-request.json`; completed generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
@@ -621,6 +629,20 @@ Local evidence on 2026-07-10:
 - Result: `CHARACTERIZED`, 20/20 complete, no protocol failures, 16
   understanding cases with 13 correct and 1 invalid response, and 4/4
   AudioCaps generation cases structurally valid with signal-sanity pass.
+- A separate Python 3.12 `audio-eval` environment loaded the pinned
+  `laion/clap-htsat-unfused` revision on MPS and scored four existing generated
+  AudioCaps WAVs end to end. Model load took 19.82 seconds, CPU preprocessing
+  0.05 seconds, and model inference 2.06 seconds. The diagnostic result had a
+  1.0 hard-foil win rate and 0.75 retrieval recall@1. This proves the local
+  worker path, not CLAP qualification; the result remains `UNSCORED` until the
+  fixed ESC-50 gate is implemented.
+- The same isolated environment loaded the pinned AST checkpoint on MPS and
+  classified those four WAVs with raw-logit sigmoid and exact checkpoint
+  labels. Model load took 13.58 seconds, CPU preprocessing 0.03 seconds, and
+  inference 0.34 seconds. At the provisional 0.10 diagnostic threshold, 2/4
+  cases hit at least one requested label and 1/4 hit a forbidden label. These
+  are plumbing diagnostics, not a qualified AST capability score, so the
+  result remains `UNSCORED`.
 
 Likely future commands, after semantic oracle qualification exists:
 
