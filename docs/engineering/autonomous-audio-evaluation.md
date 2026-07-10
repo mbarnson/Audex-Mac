@@ -449,7 +449,8 @@ Current implementation status:
 - `audex_mac/audio_evaluation_oracles.py` contains a smoke-tier signal sanity
   oracle with deterministic self-tests. It gates finite/nonempty duration,
   silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
-  it does not score caption alignment.
+  it also records a lightweight zero-crossing activity proxy for bandwidth
+  sanity. It does not score caption alignment.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and

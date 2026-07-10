@@ -198,6 +198,7 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert attempt.signal_metrics["rms"] > 0.0
     assert abs(attempt.signal_metrics["dc_offset"]) < 0.01
     assert attempt.signal_metrics["sample_delta_peak"] > 0.0
+    assert attempt.signal_metrics["zero_crossing_rate"] > 0.0
     assert attempt.finish_reason == "stop"
 
 

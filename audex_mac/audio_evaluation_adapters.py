@@ -157,6 +157,12 @@ def _signal_metrics(path: Path) -> Mapping[str, Any]:
         ),
         default=0.0,
     )
+    zero_crossings = sum(
+        1
+        for previous, current in zip(values, values[1:], strict=False)
+        if (previous < 0.0 < current) or (previous > 0.0 > current)
+    )
+    zero_crossing_rate = zero_crossings / (len(values) - 1) if len(values) > 1 else 0.0
     metrics.update(
         {
             "finite": finite,
@@ -169,6 +175,7 @@ def _signal_metrics(path: Path) -> Mapping[str, Any]:
             "rms": rms,
             "dc_offset": dc_offset,
             "sample_delta_peak": sample_delta_peak,
+            "zero_crossing_rate": zero_crossing_rate,
             "clipped": peak >= 0.999,
         }
     )

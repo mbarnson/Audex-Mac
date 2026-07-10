@@ -22,6 +22,7 @@ class SignalSanityConfig:
     min_rms: float = 0.0005
     max_abs_dc_offset: float = 0.25
     min_sample_delta_peak: float = 0.00001
+    min_zero_crossing_rate: float = 0.0001
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,7 @@ class SignalSanityOracleSuite:
                 "rms": 0.1,
                 "dc_offset": 0.0,
                 "sample_delta_peak": 0.1,
+                "zero_crossing_rate": 0.01,
                 "clipped": False,
             }
         )
@@ -52,6 +54,7 @@ class SignalSanityOracleSuite:
                 "rms": 0.0,
                 "dc_offset": 0.0,
                 "sample_delta_peak": 0.0,
+                "zero_crossing_rate": 0.0,
                 "clipped": False,
             }
         )
@@ -64,6 +67,7 @@ class SignalSanityOracleSuite:
                 "rms": 0.8,
                 "dc_offset": 0.0,
                 "sample_delta_peak": 0.1,
+                "zero_crossing_rate": 0.01,
                 "clipped": True,
             }
         )
@@ -76,6 +80,7 @@ class SignalSanityOracleSuite:
                 "rms": 0.3,
                 "dc_offset": 0.4,
                 "sample_delta_peak": 0.1,
+                "zero_crossing_rate": 0.01,
                 "clipped": False,
             }
         )
@@ -88,6 +93,7 @@ class SignalSanityOracleSuite:
                 "rms": 0.5,
                 "dc_offset": 0.0,
                 "sample_delta_peak": 0.0,
+                "zero_crossing_rate": 0.0,
                 "clipped": False,
             }
         )
@@ -138,6 +144,7 @@ class SignalSanityOracleSuite:
         rms = _float_metric(metrics, "rms")
         dc_offset = _float_metric(metrics, "dc_offset")
         sample_delta_peak = _float_metric(metrics, "sample_delta_peak")
+        zero_crossing_rate = _float_metric(metrics, "zero_crossing_rate")
         checks = {
             "finite": bool(metrics.get("finite", False)),
             "nonempty": bool(metrics.get("nonempty", False)),
@@ -156,6 +163,10 @@ class SignalSanityOracleSuite:
             "sample_variation": (
                 sample_delta_peak is not None
                 and sample_delta_peak >= self.config.min_sample_delta_peak
+            ),
+            "zero_crossing_activity": (
+                zero_crossing_rate is not None
+                and zero_crossing_rate >= self.config.min_zero_crossing_rate
             ),
             "not_clipped": (
                 peak is not None
@@ -179,6 +190,7 @@ class SignalSanityOracleSuite:
             "min_rms": self.config.min_rms,
             "max_abs_dc_offset": self.config.max_abs_dc_offset,
             "min_sample_delta_peak": self.config.min_sample_delta_peak,
+            "min_zero_crossing_rate": self.config.min_zero_crossing_rate,
         }
 
 

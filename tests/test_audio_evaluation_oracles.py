@@ -40,6 +40,7 @@ def test_signal_sanity_oracle_flags_silence_as_protocol_failure(tmp_path) -> Non
             "rms": 0.0,
             "dc_offset": 0.0,
             "sample_delta_peak": 0.0,
+            "zero_crossing_rate": 0.0,
             "clipped": False,
         },
         elapsed_seconds=1.0,
@@ -68,6 +69,7 @@ def test_signal_sanity_oracle_flags_dc_bias_and_flat_waveforms(tmp_path) -> None
                 "rms": 0.3,
                 "dc_offset": 0.4,
                 "sample_delta_peak": 0.1,
+                "zero_crossing_rate": 0.01,
                 "clipped": False,
             },
         ),
@@ -84,6 +86,7 @@ def test_signal_sanity_oracle_flags_dc_bias_and_flat_waveforms(tmp_path) -> None
                 "rms": 0.3,
                 "dc_offset": 0.0,
                 "sample_delta_peak": 0.0,
+                "zero_crossing_rate": 0.0,
                 "clipped": False,
             },
         ),
@@ -91,6 +94,7 @@ def test_signal_sanity_oracle_flags_dc_bias_and_flat_waveforms(tmp_path) -> None
 
     assert "dc_offset_in_range" in dc_biased["protocol_failures"]
     assert "sample_variation" in flat["protocol_failures"]
+    assert "zero_crossing_activity" in flat["protocol_failures"]
 
 
 def _attempt(
