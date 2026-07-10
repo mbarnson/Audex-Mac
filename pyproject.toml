@@ -20,6 +20,7 @@ audio-eval = [
   "numpy>=1.26",
   "scipy>=1.13",
   "soundfile>=0.12",
+  "torch>=2.4",
   "transformers>=4.46",
 ]
 oracle = [

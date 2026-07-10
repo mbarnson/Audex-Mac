@@ -428,8 +428,15 @@ Current implementation status:
   refinement before standard/full claims.
 - `audex_mac/audio_evaluation_adapters.py` contains the Audex vLLM
   understanding adapter and a TTA adapter that builds CFG3 XCodec token streams.
-  The TTA waveform decoder is intentionally injected; a native Apple-compatible
-  XCodec decoder remains required before generation gates can run end to end.
+- `audex_mac/audio_evaluation_xcodec.py` resolves the external XCodec1 model
+  path with fail-loud `XCODEC1_PATH` handling, loads the Hugging Face codec only
+  when evaluation decoding is requested, converts Audex's interleaved
+  4-codebook RVQ stream into codec-local codebook IDs, and writes raw 16 kHz
+  PCM WAV output. Device selection defaults to `auto` (`cuda`, then `mps`, then
+  `cpu`); forcing CPU is explicit. XCodec1 weights are not bundled with Audex;
+  use a local snapshot of `hf-audio/xcodec-hubert-general-balanced`.
+- Full generation gates still require command wiring from generated codec IDs to
+  `XCodec1WavDecoder`, local oracle qualification, and enhanced 48 kHz output.
 - `audex_mac/audio_evaluation_runner.py` executes cases through those adapters,
   records outputs/metrics, and treats structural, signal, oracle, and
   infrastructure failures as protocol failures.
@@ -468,12 +475,12 @@ Patterns to reuse:
 Keep evaluator dependencies out of the conversational runtime. A likely split:
 
 - `audio-eval`: PyTorch, Transformers, soundfile, scipy, and resampling support
-  for CLAP and AST.
+  for XCodec1, CLAP, and AST.
 - `openl3-worker`: Python 3.11, OpenL3 0.4.2, TensorFlow 2.13.x, NumPy 1.x,
   librosa, soxr, soundfile, and loudness utilities.
 
-Likely future commands, after the native decoder and oracle qualification path
-exist:
+Likely future commands, after the generation runner and oracle qualification
+path exist:
 
 ```sh
 audex-mac eval-audio-capabilities --tier smoke --model 30b
@@ -513,5 +520,7 @@ Do not add these to the runbook until they exist.
   <https://huggingface.co/datasets/renumics/song-describer-dataset>
 - SongDescriber Zenodo record:
   <https://zenodo.org/records/10072001>
+- XCodec1:
+  <https://huggingface.co/hf-audio/xcodec-hubert-general-balanced>
 - Mistral Voxtral audio documentation:
   <https://docs.mistral.ai/capabilities/audio/>
