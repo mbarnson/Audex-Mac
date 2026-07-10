@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from audex_mac.audio_projector import (
     resolve_audio_projector_shards,
     strip_audio_projector_prefix,
 )
+from tests.mlx_test_utils import require_mlx_core
 
 pytestmark = pytest.mark.fast
 
@@ -58,12 +58,8 @@ def test_strip_audio_projector_prefix_rejects_non_projector_keys() -> None:
         strip_audio_projector_prefix("audio_encoder.layers.0.weight")
 
 
-@pytest.mark.skipif(
-    importlib.util.find_spec("mlx") is None,
-    reason="MLX is installed in the vLLM Metal runtime, not the fast test venv",
-)
 def test_project_audio_hidden_states_mlx_uses_expected_shape() -> None:
-    import mlx.core as mx
+    mx = require_mlx_core()
 
     config = AudexProjectorConfig(
         audio_hidden_size=2,

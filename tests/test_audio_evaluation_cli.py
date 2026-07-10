@@ -123,7 +123,14 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     assert manifest["tier"] == "smoke"
     assert manifest["case_count"] == 32
     assert manifest["model"]["size"] == "30b"
+    assert manifest["generation_recipe"]["name"] == "audex_tta_cfg3_xcodec1"
+    assert manifest["generation_recipe"]["cfg_scale"] == 3.0
+    assert manifest["understanding_protocol"]["scoring"].startswith("exact")
     assert environment["hf_token_present"] is True
+    assert environment["git"]["available"] is True
+    assert environment["git"]["commit"]
+    assert environment["host"]["python"]
+    assert "transformers" in environment["dependencies"]
     assert "hf_should_not_be_recorded" not in json.dumps(manifest)
     assert "hf_should_not_be_recorded" not in json.dumps(environment)
 
@@ -528,6 +535,13 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     )
     assert manifest["model"]["repo_id"] == "fixture/audex"
     assert manifest["model"]["path"] == str(tmp_path / "checkpoint_folder_full")
+    environment = json.loads(
+        (tmp_path / "runs" / "resolved-model-test" / "environment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert environment["audex_eval"]["model_repo"] == "fixture/audex"
+    assert environment["audex_eval"]["model_path_exists"] is False
 
 
 def test_audio_evaluation_cli_rejects_nvfp4_2b_selection(tmp_path: Path) -> None:

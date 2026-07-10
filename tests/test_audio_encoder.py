@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from audex_mac.audio_encoder import (
     load_audio_encoder_config,
     resolve_audio_encoder_shards,
 )
+from tests.mlx_test_utils import require_mlx_core
 
 pytestmark = pytest.mark.fast
 
@@ -65,12 +65,8 @@ def test_resolve_audio_encoder_shards_requires_all_layer_tensors(
         resolve_audio_encoder_shards(tmp_path)
 
 
-@pytest.mark.skipif(
-    importlib.util.find_spec("mlx") is None,
-    reason="MLX is installed in the vLLM Metal runtime, not the fast test venv",
-)
 def test_encode_audio_features_mlx_accepts_tiny_zero_layer_encoder() -> None:
-    import mlx.core as mx
+    mx = require_mlx_core()
 
     config = AudexAudioEncoderConfig(
         d_model=2,

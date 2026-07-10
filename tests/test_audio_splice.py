@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
 from audex_mac.audio_splice import (
@@ -9,6 +7,7 @@ from audex_mac.audio_splice import (
     splice_audio_embeddings_mlx,
     validate_audio_splice_plan,
 )
+from tests.mlx_test_utils import require_mlx_core
 
 pytestmark = pytest.mark.fast
 
@@ -37,12 +36,8 @@ def test_validate_audio_splice_plan_accepts_matching_count() -> None:
     assert plan.audio_embedding_shape == (2, 2048)
 
 
-@pytest.mark.skipif(
-    importlib.util.find_spec("mlx") is None,
-    reason="MLX is installed in the vLLM Metal runtime, not the fast test venv",
-)
 def test_splice_audio_embeddings_mlx_replaces_only_sound_tokens() -> None:
-    import mlx.core as mx
+    mx = require_mlx_core()
 
     token_ids = mx.array([10, 29, 29, 31], dtype=mx.int32)
     input_embeddings = mx.array(

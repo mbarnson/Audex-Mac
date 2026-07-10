@@ -86,6 +86,9 @@ class AudioEvaluationSummary:
     case_completeness: float
     accuracy: float | None
     invalid_response_rate: float | None
+    understanding_by_category: Mapping[str, Mapping[str, Any]]
+    balanced_accuracy: float | None
+    generation: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
 
 
@@ -291,6 +294,11 @@ class AudioEvaluationRun:
             if case.case_id not in self._completed_case_ids
         )
         outputs = self._load_outputs()
+        outputs_by_case_id = {
+            str(output["case_id"]): output
+            for output in outputs
+            if str(output.get("case_id", "")).strip()
+        }
         scored = [output for output in outputs if "correct" in output]
         accuracy = (
             sum(bool(output["correct"]) for output in scored) / len(scored)
@@ -311,6 +319,10 @@ class AudioEvaluationRun:
             verdict = RunVerdict.PROTOCOL_FAIL
         else:
             verdict = RunVerdict.CHARACTERIZED
+        understanding_by_category = _understanding_by_category(
+            self.cases,
+            outputs_by_case_id,
+        )
         summary = AudioEvaluationSummary(
             verdict=verdict,
             total_cases=len(self.cases),
@@ -319,6 +331,9 @@ class AudioEvaluationRun:
             case_completeness=len(self._completed_case_ids) / len(self.cases),
             accuracy=accuracy,
             invalid_response_rate=invalid_rate,
+            understanding_by_category=understanding_by_category,
+            balanced_accuracy=_balanced_accuracy(understanding_by_category),
+            generation=_generation_summary(self.cases, outputs_by_case_id),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
         )
         self.summary_path.write_text(
@@ -350,6 +365,100 @@ def _summary_payload(summary: AudioEvaluationSummary) -> dict[str, Any]:
     payload["missing_case_ids"] = list(summary.missing_case_ids)
     payload["protocol_failures"] = list(summary.protocol_failures)
     return payload
+
+
+def _understanding_by_category(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    by_category: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        if case.track is not EvaluationTrack.UNDERSTANDING:
+            continue
+        bucket = by_category.setdefault(
+            case.category,
+            {
+                "total_cases": 0,
+                "completed_cases": 0,
+                "valid_responses": 0,
+                "correct": 0,
+                "accuracy": None,
+                "invalid_response_rate": None,
+            },
+        )
+        bucket["total_cases"] += 1
+        output = outputs_by_case_id.get(case.case_id)
+        if output is None or "correct" not in output:
+            continue
+        bucket["completed_cases"] += 1
+        if bool(output.get("valid", False)):
+            bucket["valid_responses"] += 1
+        if bool(output.get("correct", False)):
+            bucket["correct"] += 1
+
+    for bucket in by_category.values():
+        completed = int(bucket["completed_cases"])
+        if completed:
+            bucket["accuracy"] = int(bucket["correct"]) / completed
+            bucket["invalid_response_rate"] = (
+                completed - int(bucket["valid_responses"])
+            ) / completed
+    return dict(sorted(by_category.items()))
+
+
+def _balanced_accuracy(
+    category_summary: Mapping[str, Mapping[str, Any]],
+) -> float | None:
+    accuracies = [
+        float(summary["accuracy"])
+        for summary in category_summary.values()
+        if summary.get("accuracy") is not None
+    ]
+    return sum(accuracies) / len(accuracies) if accuracies else None
+
+
+def _generation_summary(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    generation_cases = [
+        case for case in cases if case.track is EvaluationTrack.GENERATION
+    ]
+    completed_outputs = [
+        outputs_by_case_id[case.case_id]
+        for case in generation_cases
+        if case.case_id in outputs_by_case_id
+    ]
+    structural_failures: dict[str, int] = {}
+    signal_failures: dict[str, int] = {}
+    for output in completed_outputs:
+        for failure in output.get("structure_failures", ()):
+            key = str(failure)
+            structural_failures[key] = structural_failures.get(key, 0) + 1
+        signal_metrics = output.get("signal_metrics", {})
+        if isinstance(signal_metrics, Mapping):
+            if not bool(signal_metrics.get("finite", True)):
+                signal_failures["nonfinite_waveform"] = (
+                    signal_failures.get("nonfinite_waveform", 0) + 1
+                )
+            if not bool(signal_metrics.get("nonempty", True)):
+                signal_failures["empty_waveform"] = (
+                    signal_failures.get("empty_waveform", 0) + 1
+                )
+            if bool(signal_metrics.get("clipped", False)):
+                signal_failures["clipped_waveform"] = (
+                    signal_failures.get("clipped_waveform", 0) + 1
+                )
+    return {
+        "total_cases": len(generation_cases),
+        "completed_cases": len(completed_outputs),
+        "structurally_valid": sum(
+            bool(output.get("structurally_valid", False))
+            for output in completed_outputs
+        ),
+        "structural_failures": dict(sorted(structural_failures.items())),
+        "signal_failures": dict(sorted(signal_failures.items())),
+    }
 
 
 def _write_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:

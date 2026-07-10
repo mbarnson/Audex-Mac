@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
+import platform
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +27,7 @@ from .audio_evaluation_adapters import (
     AudexVllmUnderstandingAdapter,
 )
 from .audio_evaluation_datasets import MaterializedAudio
+from .audio_evaluation_generation import TtaRecipe
 from .audio_evaluation_hf import (
     DatasetPin,
     HfAudioMaterializer,
@@ -238,6 +245,15 @@ def main(
                 "profile": args.profile,
                 "repo_id": model_repo,
                 "path": str(model_path) if model_path is not None else None,
+                "snapshot_revision": _hf_snapshot_revision(model_path),
+            },
+            "understanding_protocol": {
+                "answer_space": "single constrained multiple-choice label",
+                "scoring": "exact normalized label match; prose fails closed",
+            },
+            "generation_recipe": {
+                "name": "audex_tta_cfg3_xcodec1",
+                **asdict(TtaRecipe()),
             },
             "generation_oracles": args.generation_oracles,
             "omitted_datasets": _omitted_datasets(args),
@@ -256,6 +272,12 @@ def main(
         },
         environment={
             "hf_token_present": bool(hf_token),
+            **_environment_payload(
+                model_path=model_path,
+                model_repo=model_repo,
+                xcodec_config=xcodec_config,
+                generation_oracles=args.generation_oracles,
+            ),
         },
     )
     if args.materialize_only:
@@ -300,6 +322,113 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "license": pin.license,
         "expected_rows": pin.expected_rows,
     }
+
+
+def _environment_payload(
+    *,
+    model_path: Path | None,
+    model_repo: str,
+    xcodec_config: XCodec1Config | None,
+    generation_oracles: str,
+) -> dict[str, Any]:
+    return {
+        "audex_eval": {
+            "model_repo": model_repo,
+            "model_path_exists": (
+                model_path.exists() if model_path is not None else None
+            ),
+            "xcodec1": (
+                {
+                    "repo_id": xcodec_config.repo_id,
+                    "path": str(xcodec_config.path),
+                    "path_exists": xcodec_config.path.exists(),
+                    "snapshot_revision": _hf_snapshot_revision(xcodec_config.path),
+                    "device": xcodec_config.device,
+                }
+                if xcodec_config is not None
+                else None
+            ),
+            "generation_oracles": generation_oracles,
+        },
+        "git": _git_payload(),
+        "host": {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "macos": platform.mac_ver()[0],
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+        },
+        "dependencies": _dependency_versions(
+            (
+                "mlx",
+                "mlx-lm",
+                "numpy",
+                "scipy",
+                "soundfile",
+                "torch",
+                "transformers",
+                "vllm",
+            )
+        ),
+    }
+
+
+def _git_payload() -> dict[str, Any]:
+    head = _git_text("rev-parse", "HEAD")
+    branch = _git_text("rev-parse", "--abbrev-ref", "HEAD")
+    status = _git_bytes("status", "--short", "--untracked-files=no")
+    diff = _git_bytes("diff", "--binary", "HEAD") or b""
+    dirty = bool(status.strip()) if status is not None else False
+    return {
+        "available": head is not None,
+        "commit": head,
+        "branch": branch,
+        "dirty": dirty,
+        "dirty_diff_sha256": hashlib.sha256(diff).hexdigest() if dirty else None,
+    }
+
+
+def _git_text(*args: str) -> str | None:
+    output = _git_bytes(*args)
+    if output is None:
+        return None
+    return output.decode("utf-8", errors="replace").strip() or None
+
+
+def _git_bytes(*args: str) -> bytes | None:
+    try:
+        result = subprocess.run(
+            ("git", *args),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=Path.cwd(),
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _dependency_versions(packages: tuple[str, ...]) -> dict[str, str | None]:
+    versions: dict[str, str | None] = {}
+    for package in packages:
+        try:
+            versions[package] = importlib_metadata.version(package)
+        except importlib_metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def _hf_snapshot_revision(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    parts = path.expanduser().parts
+    for index, part in enumerate(parts[:-1]):
+        if part == "snapshots":
+            return parts[index + 1]
+    return None
 
 
 def _load_cases_from_run(run_dir: Path) -> tuple[AudioEvaluationCase, ...]:

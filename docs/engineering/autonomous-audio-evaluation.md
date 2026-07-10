@@ -418,7 +418,9 @@ Current implementation status:
 
 - `audex_mac/audio_evaluation.py` owns case contracts, deterministic seeds,
   constrained-answer scoring, append-only artifacts, summary verdicts, and
-  credential rejection.
+  credential rejection. Current summaries report overall constrained-answer
+  accuracy, invalid response rate, per-category understanding accuracy,
+  balanced accuracy, and generation structural/signal failure counts.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
@@ -448,7 +450,11 @@ Current implementation status:
   `--model-path` override. It still requires `XCODEC1_PATH` or
   `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes raw
   16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes run
-  artifacts. Semantic generation metrics remain future work; use
+  artifacts. The smoke manifest/environment records model selection, Hugging
+  Face snapshot revisions when paths expose them, the pinned CFG3 TTA recipe,
+  constrained-answer scoring protocol, dataset pins/omissions, git commit and
+  dirty diff hash, host metadata, and key dependency versions without recording
+  credentials. Semantic generation metrics remain future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior.
 

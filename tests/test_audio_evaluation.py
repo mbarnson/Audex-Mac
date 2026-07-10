@@ -35,6 +35,23 @@ def _case(case_id: str, category: str) -> AudioEvaluationCase:
     )
 
 
+def _generation_case(case_id: str, category: str = "audiocaps") -> AudioEvaluationCase:
+    return AudioEvaluationCase(
+        case_id=case_id,
+        track=EvaluationTrack.GENERATION,
+        dataset_id="fixture/captions",
+        dataset_revision="def456",
+        dataset_config="default",
+        dataset_split="test",
+        source_row_id=case_id,
+        source_row_hash=f"hash-{case_id}",
+        license="CC-BY-4.0",
+        category=category,
+        prompt="A dog barks twice.",
+        caption="A dog barks twice.",
+    )
+
+
 @pytest.mark.fast
 def test_stratified_selection_is_balanced_stable_and_order_independent() -> None:
     cases = tuple(
@@ -123,6 +140,73 @@ def test_run_artifacts_require_complete_outputs_before_characterizing(
     assert summary["verdict"] == "CHARACTERIZED"
     assert (run.run_dir / "understanding" / "cases.jsonl").is_file()
     assert (run.run_dir / "understanding" / "outputs.jsonl").is_file()
+
+
+@pytest.mark.fast
+def test_run_summary_reports_category_and_generation_breakdowns(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        _case("sound-1", "sound"),
+        _case("sound-2", "sound"),
+        _case("music-1", "music"),
+        _generation_case("audiocaps-1"),
+    )
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="breakdowns",
+        tier="smoke",
+        master_seed=17,
+        cases=cases,
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+
+    run.record_output(
+        case_id="sound-1",
+        payload={"raw_answer": "B", "valid": True, "correct": True},
+    )
+    run.record_output(
+        case_id="sound-2",
+        payload={"raw_answer": "A", "valid": True, "correct": False},
+    )
+    run.record_output(
+        case_id="music-1",
+        payload={"raw_answer": "dog", "valid": False, "correct": False},
+    )
+    run.record_output(
+        case_id="audiocaps-1",
+        payload={
+            "structurally_valid": False,
+            "structure_failures": ["missing_end_token"],
+            "signal_metrics": {
+                "finite": True,
+                "nonempty": True,
+                "clipped": True,
+            },
+        },
+    )
+
+    summary = run.finalize(required_oracles_qualified=True)
+
+    assert summary.accuracy == pytest.approx(1 / 3)
+    assert summary.balanced_accuracy == pytest.approx(0.25)
+    payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
+    assert payload["understanding_by_category"]["sound"] == {
+        "accuracy": 0.5,
+        "completed_cases": 2,
+        "correct": 1,
+        "invalid_response_rate": 0.0,
+        "total_cases": 2,
+        "valid_responses": 2,
+    }
+    assert payload["understanding_by_category"]["music"]["invalid_response_rate"] == 1.0
+    assert payload["generation"] == {
+        "completed_cases": 1,
+        "signal_failures": {"clipped_waveform": 1},
+        "structural_failures": {"missing_end_token": 1},
+        "structurally_valid": 0,
+        "total_cases": 1,
+    }
 
 
 @pytest.mark.fast
