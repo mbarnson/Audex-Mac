@@ -141,5 +141,53 @@ def test_caption_rows_are_pinned_without_reference_audio_in_the_prompt() -> None
     assert case.caption == "A dog barks twice beside a passing train."
     assert case.audio_path is None
     assert case.prompt == case.caption
+    assert case.hard_foil_caption is None
     assert "secret-source" not in case.prompt
     assert len(case.source_row_hash) == 64
+
+
+@pytest.mark.fast
+def test_caption_rows_get_deterministic_hard_foil_captions() -> None:
+    cases = build_caption_cases(
+        [
+            {"audiocap_id": 2, "caption": "A cat meows."},
+            {"audiocap_id": 1, "caption": "A train horn sounds."},
+            {"audiocap_id": 3, "caption": "Rain falls on leaves."},
+        ],
+        dataset_id="OpenSound/AudioCaps",
+        dataset_revision="1234abcd",
+        dataset_config="default",
+        dataset_split="test",
+        license="CC-BY-4.0",
+        id_field="audiocap_id",
+        caption_field="caption",
+        category="audiocaps",
+    )
+
+    by_id = {case.case_id: case for case in cases}
+    assert by_id["audiocaps-1"].hard_foil_caption == "A cat meows."
+    assert by_id["audiocaps-2"].hard_foil_caption == "Rain falls on leaves."
+    assert by_id["audiocaps-3"].hard_foil_caption == "A train horn sounds."
+    assert all(case.hard_foil_caption != case.caption for case in cases)
+
+
+@pytest.mark.fast
+def test_caption_hard_foils_skip_duplicate_captions() -> None:
+    cases = build_caption_cases(
+        [
+            {"audiocap_id": 1, "caption": "A dog barks."},
+            {"audiocap_id": 2, "caption": "A dog barks."},
+            {"audiocap_id": 3, "caption": "A bell rings."},
+        ],
+        dataset_id="OpenSound/AudioCaps",
+        dataset_revision="1234abcd",
+        dataset_config="default",
+        dataset_split="test",
+        license="CC-BY-4.0",
+        id_field="audiocap_id",
+        caption_field="caption",
+        category="audiocaps",
+    )
+
+    assert all(case.hard_foil_caption for case in cases)
+    assert all(case.hard_foil_caption != case.caption for case in cases)

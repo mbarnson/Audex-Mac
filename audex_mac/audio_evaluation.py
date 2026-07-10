@@ -44,6 +44,7 @@ class AudioEvaluationCase:
     expected_answer: str | None = None
     audio_path: str | None = None
     caption: str | None = None
+    hard_foil_caption: str | None = None
     choices: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:

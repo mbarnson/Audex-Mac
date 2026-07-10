@@ -10,6 +10,7 @@ from typing import Any
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack
 from .audio_evaluation_datasets import (
     MaterializedAudio,
+    attach_caption_hard_foils,
     build_caption_cases,
     build_esc50_cases,
     build_mmau_cases,
@@ -194,7 +195,7 @@ def build_smoke_cases_from_rows(
                 category="song-describer",
             )
         )
-    return tuple(cases)
+    return attach_caption_hard_foils(tuple(cases))
 
 
 def build_standard_cases_from_rows(
@@ -290,7 +291,7 @@ def build_standard_cases_from_rows(
             )
         )
     cases.extend(_build_standard_control_cases())
-    return tuple(cases)
+    return attach_caption_hard_foils(tuple(cases))
 
 
 def build_full_cases_from_rows(
@@ -355,7 +356,7 @@ def build_full_cases_from_rows(
             )
         )
     cases.extend(_build_standard_control_cases())
-    return tuple(cases)
+    return attach_caption_hard_foils(tuple(cases))
 
 
 def _build_standard_control_cases() -> tuple[AudioEvaluationCase, ...]:
@@ -379,7 +380,7 @@ def _build_standard_control_cases() -> tuple[AudioEvaluationCase, ...]:
                 caption=caption,
             )
         )
-    return tuple(cases)
+    return attach_caption_hard_foils(tuple(cases))
 
 
 def _select_rows(

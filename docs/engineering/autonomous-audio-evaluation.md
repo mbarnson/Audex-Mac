@@ -421,8 +421,10 @@ Current implementation status:
 
 - `audex_mac/audio_evaluation.py` owns case contracts, deterministic seeds,
   constrained-answer scoring, append-only artifacts, summary verdicts, and
-  credential rejection. Current summaries report overall constrained-answer
-  accuracy, invalid response rate, per-category understanding accuracy,
+  credential rejection. Generation case manifests can carry deterministic
+  hard-foil captions for future caption-alignment metrics. Current summaries
+  report overall constrained-answer accuracy, invalid response rate,
+  per-category understanding accuracy,
   balanced accuracy, YES/NO false-positive and false-negative rates,
   deterministic bootstrap confidence intervals for accuracy, generation
   structural/signal failure counts, technical failure rates, and per-track

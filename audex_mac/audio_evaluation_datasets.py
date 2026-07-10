@@ -6,7 +6,7 @@ import hashlib
 import json
 import string
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack
@@ -188,7 +188,46 @@ def build_caption_cases(
                 caption=caption,
             )
         )
-    return tuple(cases)
+    return attach_caption_hard_foils(tuple(cases))
+
+
+def attach_caption_hard_foils(
+    cases: tuple[AudioEvaluationCase, ...],
+) -> tuple[AudioEvaluationCase, ...]:
+    """Attach deterministic caption foils for generation semantic metrics.
+
+    Foils are drawn from the same generated-audio manifest so CLAP-style
+    retrieval can later ask whether the output is closer to the requested
+    caption than to a plausible in-suite negative without leaking reference
+    audio into the prompt.
+    """
+
+    if len(cases) < 2:
+        return cases
+    ranked = tuple(sorted(cases, key=lambda case: case.case_id))
+    foil_by_id: dict[str, str] = {}
+    for index, case in enumerate(ranked):
+        if case.track is not EvaluationTrack.GENERATION or not case.caption:
+            continue
+        for offset in range(1, len(ranked)):
+            candidate = ranked[(index + offset) % len(ranked)]
+            if (
+                candidate.track is EvaluationTrack.GENERATION
+                and candidate.caption
+                and candidate.caption != case.caption
+            ):
+                foil_by_id[case.case_id] = candidate.caption
+                break
+    if not foil_by_id:
+        return cases
+    return tuple(
+        (
+            replace(case, hard_foil_caption=foil_by_id[case.case_id])
+            if case.case_id in foil_by_id
+            else case
+        )
+        for case in cases
+    )
 
 
 def _multiple_choice_prompt(
