@@ -53,6 +53,7 @@ from .audio_evaluation_xcodec import (
     resolve_xcodec1_config,
 )
 from .audio_runtime import preflight_audio_runtime
+from .conversations import DEFAULT_DEMO_CONTEXT_TOKENS
 from .models import (
     AUDEX_2B_REPO,
     AUDEX_30B_NVFP4_REPO,
@@ -246,6 +247,7 @@ def main(
                 "repo_id": model_repo,
                 "path": str(model_path) if model_path is not None else None,
                 "snapshot_revision": _hf_snapshot_revision(model_path),
+                "context": _model_context_payload(args.model, model_path),
             },
             "understanding_protocol": {
                 "answer_space": "single constrained multiple-choice label",
@@ -371,6 +373,43 @@ def _environment_payload(
             )
         ),
     }
+
+
+def _model_context_payload(model_size: str, model_path: Path | None) -> dict[str, Any]:
+    checkpoint_limit = _checkpoint_declared_context(model_path)
+    effective_limit = (
+        min(DEFAULT_DEMO_CONTEXT_TOKENS, checkpoint_limit)
+        if checkpoint_limit is not None
+        else None
+    )
+    return {
+        "model_card_max_tokens": _model_card_max_context(model_size),
+        "configured_demo_max_tokens": DEFAULT_DEMO_CONTEXT_TOKENS,
+        "checkpoint_max_position_embeddings": checkpoint_limit,
+        "effective_engine_max_model_len": effective_limit,
+    }
+
+
+def _model_card_max_context(model_size: str) -> int | None:
+    if model_size == "30b":
+        return 1_000_000
+    if model_size == "2b":
+        return 128_000
+    return None
+
+
+def _checkpoint_declared_context(model_path: Path | None) -> int | None:
+    if model_path is None:
+        return None
+    config_path = model_path / "config.json"
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = payload.get("max_position_embeddings")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def _git_payload() -> dict[str, Any]:

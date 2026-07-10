@@ -453,10 +453,11 @@ Current implementation status:
   `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes raw
   16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes run
   artifacts. The smoke manifest/environment records model selection, Hugging
-  Face snapshot revisions when paths expose them, the pinned CFG3 TTA recipe,
-  constrained-answer scoring protocol, dataset pins/omissions, git commit and
-  dirty diff hash, host metadata, and key dependency versions without recording
-  credentials. Semantic generation metrics remain future work; use
+  Face snapshot revisions when paths expose them, model-card and configured
+  engine context limits, the pinned CFG3 TTA recipe, constrained-answer scoring
+  protocol, dataset pins/omissions, git commit and dirty diff hash, host
+  metadata, and key dependency versions without recording credentials. Semantic
+  generation metrics remain future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior.
 
