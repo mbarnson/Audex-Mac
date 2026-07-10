@@ -506,7 +506,9 @@ Current implementation status:
   accepts an explicit `--model-path` override. It still requires `XCODEC1_PATH`
   or `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes
   raw 16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes
-  run artifacts. The smoke/standard/full manifest/environment records model
+  run artifacts. Execution accepts repeated `--capability-target NAME=VALUE`
+  arguments for explicit `PASS`/`CAPABILITY_FAIL` verdicts. The
+  smoke/standard/full manifest/environment records model
   selection, Hugging Face snapshot revisions when paths expose them, model-card
   and configured engine context limits, small model/decoder config file hashes,
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
