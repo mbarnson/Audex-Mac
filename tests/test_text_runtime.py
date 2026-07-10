@@ -109,6 +109,7 @@ def test_text_preflight_requires_the_shipped_audex_chat_template(
 
 def test_text_preflight_falls_back_when_referenced_snapshot_omits_template(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     complete = make_snapshot(tmp_path)
     (complete / "checkpoint_folder_textonly" / "model.safetensors").write_text(
@@ -134,6 +135,10 @@ def test_text_preflight_falls_back_when_referenced_snapshot_omits_template(
         "new-without-template",
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        "audex_mac.text_runtime.importlib.util.find_spec",
+        lambda _name: None,
+    )
 
     result = preflight_text_runtime(
         DEFAULT_MODEL,
@@ -143,5 +148,11 @@ def test_text_preflight_falls_back_when_referenced_snapshot_omits_template(
         backend="mlx",
     )
 
-    assert result.ready is True
+    assert result.snapshot_check.complete is True
     assert result.snapshot_check.snapshot_path == complete
+    assert result.chat_template_path == (
+        complete / "checkpoint_folder_full" / "chat_template.jinja"
+    )
+    assert result.ready is False
+    assert "python module mlx" in result.missing_items
+    assert "python module mlx_lm" in result.missing_items
