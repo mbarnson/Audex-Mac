@@ -59,6 +59,15 @@ def run_worker(
             detail=str(request_path),
         )
         return 2
+    validation_error = _request_validation_error(request_path)
+    if validation_error is not None:
+        _write_result(
+            output_path,
+            status="PROTOCOL_FAIL",
+            reason="invalid_ast_request",
+            detail=validation_error,
+        )
+        return 2
     _write_result(
         output_path,
         status="UNSCORED",
@@ -69,6 +78,39 @@ def run_worker(
         ),
     )
     return 2
+
+
+def _request_validation_error(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return str(exc)
+    if not isinstance(payload, dict):
+        return "request must be a JSON object"
+    if payload.get("schema_version") != 1:
+        return "schema_version must be 1"
+    requests = payload.get("requests")
+    if not isinstance(requests, list) or not requests:
+        return "requests must be a non-empty list"
+    for index, request in enumerate(requests):
+        if not isinstance(request, dict):
+            return f"request {index} must be an object"
+        for field in ("case_id", "generated_wav_path"):
+            if not str(request.get(field, "")).strip():
+                return f"request {index} is missing {field}"
+        expected_labels = request.get("expected_labels")
+        forbidden_labels = request.get("forbidden_labels", [])
+        if not isinstance(expected_labels, list) or not expected_labels:
+            return f"request {index} expected_labels must be a non-empty list"
+        if not isinstance(forbidden_labels, list):
+            return f"request {index} forbidden_labels must be a list"
+        if any(not str(label).strip() for label in expected_labels):
+            return f"request {index} expected_labels must not contain empty labels"
+        if any(not str(label).strip() for label in forbidden_labels):
+            return f"request {index} forbidden_labels must not contain empty labels"
+        if set(expected_labels) & set(forbidden_labels):
+            return f"request {index} expected/forbidden labels must not overlap"
+    return None
 
 
 def _missing_modules(module_names: tuple[str, ...]) -> tuple[str, ...]:

@@ -175,3 +175,42 @@ def test_clap_worker_fails_loud_when_dependencies_are_absent(
     payload = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     assert payload["status"] == "PROTOCOL_FAIL"
     assert payload["reason"] == "missing_clap_worker_dependencies"
+
+
+def test_clap_worker_rejects_invalid_request_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "requests": [
+                    {
+                        "case_id": "bad",
+                        "generated_wav_path": "/tmp/bad.wav",
+                        "caption": "A dog barks.",
+                        "hard_foil_caption": "A dog barks.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_clap_worker._missing_modules",
+        lambda _names: (),
+    )
+
+    exit_code = run_worker(
+        request_path=request_path,
+        output_path=tmp_path / "result.json",
+        device="mps",
+    )
+
+    assert exit_code == 2
+    payload = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "PROTOCOL_FAIL"
+    assert payload["reason"] == "invalid_clap_request"
+    assert "hard_foil_caption" in payload["detail"]

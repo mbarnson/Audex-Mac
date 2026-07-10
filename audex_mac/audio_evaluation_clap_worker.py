@@ -59,6 +59,15 @@ def run_worker(
             detail=str(request_path),
         )
         return 2
+    validation_error = _request_validation_error(request_path)
+    if validation_error is not None:
+        _write_result(
+            output_path,
+            status="PROTOCOL_FAIL",
+            reason="invalid_clap_request",
+            detail=validation_error,
+        )
+        return 2
     _write_result(
         output_path,
         status="UNSCORED",
@@ -69,6 +78,31 @@ def run_worker(
         ),
     )
     return 2
+
+
+def _request_validation_error(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return str(exc)
+    if not isinstance(payload, dict):
+        return "request must be a JSON object"
+    if payload.get("schema_version") != 1:
+        return "schema_version must be 1"
+    requests = payload.get("requests")
+    if not isinstance(requests, list) or not requests:
+        return "requests must be a non-empty list"
+    for index, request in enumerate(requests):
+        if not isinstance(request, dict):
+            return f"request {index} must be an object"
+        caption = str(request.get("caption", "")).strip()
+        hard_foil = str(request.get("hard_foil_caption", "")).strip()
+        for field in ("case_id", "generated_wav_path", "caption", "hard_foil_caption"):
+            if not str(request.get(field, "")).strip():
+                return f"request {index} is missing {field}"
+        if caption == hard_foil:
+            return f"request {index} hard_foil_caption must differ from caption"
+    return None
 
 
 def _missing_modules(module_names: tuple[str, ...]) -> tuple[str, ...]:
