@@ -206,6 +206,8 @@ def run_start_harness(tmp_path: Path, *, runtime_present: bool) -> list[str]:
         "INSTALL\n"
         '  chmod +x "${3}/install.sh"\n'
         "fi\n"
+        "if [[ \"$*\" == *'remote get-url origin'* ]]; then "
+        "echo https://example.invalid/vllm-metal; fi\n"
         "if [[ \"$*\" == *'rev-parse HEAD'* ]]; then echo pin; fi\n"
         "if [[ \"$*\" == *'refs/remotes/origin/main'* ]]; then echo pin; fi\n"
         "exit 0\n",

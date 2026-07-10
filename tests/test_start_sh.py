@@ -68,9 +68,135 @@ def test_start_sh_installs_audex_deps_into_vllm_metal_runtime() -> None:
 
     assert 'VLLM_METAL_DEPS_STAMP="${STATE_DIR}/vllm-metal-deps.stamp"' in script
     assert "ensure_vllm_metal_audex_deps()" in script
-    assert "import audex_mac, huggingface_hub, sounddevice" in script
+    assert "import audex_mac, huggingface_hub, prompt_toolkit, sounddevice" in script
     assert '"${python_bin}" -m pip install -e "${ROOT_DIR}"' in script
     assert "ensure_vllm_metal_audex_deps" in script
+
+
+def test_start_sh_reinstalls_audex_deps_after_runtime_rebuild(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    root = tmp_path / "project"
+    state = tmp_path / "state"
+    python_log = tmp_path / "python.log"
+    (runtime / "bin").mkdir(parents=True)
+    root.mkdir()
+    state.mkdir()
+    (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    stamp = state / "vllm-metal-deps.stamp"
+    stamp.touch()
+    runtime_python = runtime / "bin" / "python"
+    runtime_python.write_text(
+        "#!/bin/sh\n" 'printf \'%s\\n\' "$*" >> "$FAKE_PYTHON_LOG"\n' "exit 0\n",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+
+    start_sh = Path("start.sh").resolve()
+    command = f"""
+source {start_sh!s}
+VLLM_METAL_VENV_DIR={runtime!s}
+VLLM_METAL_DEPS_STAMP={stamp!s}
+STATE_DIR={state!s}
+ROOT_DIR={root!s}
+VLLM_METAL_PYTHONPATH={tmp_path!s}
+VLLM_METAL_INSTALL_REQUIRED=1
+ensure_vllm_metal_audex_deps
+"""
+    env = os.environ | {"FAKE_PYTHON_LOG": str(python_log)}
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    invocation = python_log.read_text(encoding="utf-8")
+    assert f"-m pip install -e {root!s}" in invocation
+
+
+def test_start_sh_ensures_managed_checkout_before_reusing_runtime() -> None:
+    script = Path("start.sh").read_text(encoding="utf-8")
+
+    checkout = script.index("\nensure_vllm_metal_checkout\n")
+    fast_path = script.index(
+        'if [[ "${REFRESH_DEPS}" == "0" && '
+        '"${VLLM_METAL_INSTALL_REQUIRED}" == "0" && '
+        '-x "${VLLM_METAL_VENV_DIR}/bin/python" ]]'
+    )
+
+    assert checkout < fast_path
+
+
+def test_start_sh_replaces_unmanaged_vendor_checkout(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor" / "vllm-metal"
+    state = tmp_path / "state"
+    bin_dir = tmp_path / "bin"
+    git_log = tmp_path / "git.log"
+    (vendor / ".venv-vllm-metal" / "bin").mkdir(parents=True)
+    (vendor / "foreign-marker").write_text("orphaned runtime\n", encoding="utf-8")
+    bin_dir.mkdir()
+
+    pin_python = bin_dir / "pin-python"
+    pin_python.write_text(
+        "#!/bin/sh\n"
+        'case "$3" in\n'
+        "  repo) echo https://github.com/vllm-project/vllm-metal ;;\n"
+        "  pinned_commit) echo pin ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'printf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\n'
+        'if [ "$1" = "clone" ]; then\n'
+        '  mkdir -p "$3/.git"\n'
+        "  exit 0\n"
+        "fi\n"
+        'case "$*" in\n'
+        "  *'rev-parse HEAD'*) echo pin ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for executable in (pin_python, fake_git):
+        executable.chmod(0o755)
+
+    start_sh = Path("start.sh").resolve()
+    command = f"""
+source {start_sh!s}
+VLLM_METAL_VENDOR_DIR={vendor!s}
+STATE_DIR={state!s}
+PYTHON_BIN={pin_python!s}
+VLLM_METAL_INSTALL_REQUIRED=0
+ensure_vllm_metal_checkout
+echo install-required=$VLLM_METAL_INSTALL_REQUIRED
+"""
+    env = os.environ | {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_GIT_LOG": str(git_log),
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Moving unmanaged vLLM Metal runtime" in result.stdout
+    assert "install-required=1" in result.stdout
+    backups = list((state / "runtime-backups").glob("vllm-metal-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "foreign-marker").read_text(encoding="utf-8") == (
+        "orphaned runtime\n"
+    )
+    invocation = git_log.read_text(encoding="utf-8")
+    assert f"clone https://github.com/vllm-project/vllm-metal {vendor!s}" in invocation
 
 
 def test_start_sh_enforces_patch_guards_before_installing_runtime_shims() -> None:

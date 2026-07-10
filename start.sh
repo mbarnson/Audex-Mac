@@ -10,6 +10,7 @@ DEPS_STAMP="${STATE_DIR}/deps.stamp"
 VLLM_METAL_DEPS_STAMP="${STATE_DIR}/vllm-metal-deps.stamp"
 PYTHON_BIN="${PYTHON_BIN:-}"
 REFRESH_DEPS=0
+VLLM_METAL_INSTALL_REQUIRED=0
 ARGS=()
 ARGS_COUNT=0
 export AUDEX_VLLM_TTS_CFG="${AUDEX_VLLM_TTS_CFG:-0}"
@@ -89,25 +90,48 @@ vllm_metal_pin_field() {
   "${PYTHON_BIN}" -c 'import json, sys; print(json.load(open("vendor_pins.json"))["vllm_metal"][sys.argv[1]])' "${field}"
 }
 
-ensure_vllm_metal_runtime() {
-  local repo pinned_commit
+move_unmanaged_vllm_metal_runtime() {
+  local backup_dir
+  backup_dir="${STATE_DIR}/runtime-backups/vllm-metal-$(date +%Y%m%d%H%M%S)-$$"
+  echo "Moving unmanaged vLLM Metal runtime to ${backup_dir}"
+  mkdir -p "$(dirname "${backup_dir}")"
+  mv "${VLLM_METAL_VENDOR_DIR}" "${backup_dir}"
+  VLLM_METAL_INSTALL_REQUIRED=1
+}
+
+ensure_vllm_metal_checkout() {
+  local repo pinned_commit installed_commit origin_url checkout_created=0
   repo="$(vllm_metal_pin_field repo)"
   pinned_commit="$(vllm_metal_pin_field pinned_commit)"
 
   mkdir -p "$(dirname "${VLLM_METAL_VENDOR_DIR}")"
-  if [[ ! -d "${VLLM_METAL_VENDOR_DIR}/.git" ]]; then
-    if [[ -e "${VLLM_METAL_VENDOR_DIR}" ]]; then
-      echo "Cannot install vLLM Metal: ${VLLM_METAL_VENDOR_DIR} exists but is not a git checkout." >&2
-      echo "Move it aside or run ./start.sh --refresh-deps after cleaning .audex/vendor/vllm-metal." >&2
-      exit 1
+  if [[ -e "${VLLM_METAL_VENDOR_DIR}" ]]; then
+    origin_url="$(
+      git -C "${VLLM_METAL_VENDOR_DIR}" remote get-url origin 2>/dev/null || true
+    )"
+    if [[ ! -d "${VLLM_METAL_VENDOR_DIR}/.git" || "${origin_url}" != "${repo}" ]]; then
+      move_unmanaged_vllm_metal_runtime
     fi
-    echo "Cloning pinned vLLM Metal runtime into ${VLLM_METAL_VENDOR_DIR}"
-    git clone "${repo}" "${VLLM_METAL_VENDOR_DIR}"
   fi
 
-  echo "Checking out pinned vLLM Metal commit ${pinned_commit}"
-  git -C "${VLLM_METAL_VENDOR_DIR}" fetch origin "${pinned_commit}" >/dev/null
-  git -C "${VLLM_METAL_VENDOR_DIR}" checkout --detach "${pinned_commit}" >/dev/null
+  if [[ ! -d "${VLLM_METAL_VENDOR_DIR}/.git" ]]; then
+    echo "Cloning pinned vLLM Metal runtime into ${VLLM_METAL_VENDOR_DIR}"
+    git clone "${repo}" "${VLLM_METAL_VENDOR_DIR}"
+    VLLM_METAL_INSTALL_REQUIRED=1
+    checkout_created=1
+  fi
+
+  installed_commit="$(git -C "${VLLM_METAL_VENDOR_DIR}" rev-parse HEAD)"
+  if [[ "${checkout_created}" == "1" || "${installed_commit}" != "${pinned_commit}" ]]; then
+    echo "Checking out pinned vLLM Metal commit ${pinned_commit}"
+    git -C "${VLLM_METAL_VENDOR_DIR}" fetch "${repo}" "${pinned_commit}" >/dev/null
+    git -C "${VLLM_METAL_VENDOR_DIR}" checkout --detach "${pinned_commit}" >/dev/null
+    VLLM_METAL_INSTALL_REQUIRED=1
+  fi
+}
+
+ensure_vllm_metal_runtime() {
+  ensure_vllm_metal_checkout
 
   echo "Installing pinned vLLM Metal runtime. This can take a while on first run."
   (cd "${VLLM_METAL_VENDOR_DIR}" && ./install.sh)
@@ -117,10 +141,10 @@ ensure_vllm_metal_audex_deps() {
   local python_bin="${VLLM_METAL_VENV_DIR}/bin/python"
   local deps_ready=0
   mkdir -p "${STATE_DIR}"
-  if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${python_bin}" -c "import audex_mac, huggingface_hub, sounddevice" >/dev/null 2>&1; then
+  if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${python_bin}" -c "import audex_mac, huggingface_hub, prompt_toolkit, sounddevice" >/dev/null 2>&1; then
     deps_ready=1
   fi
-  if [[ "${deps_ready}" != "1" || ! -f "${VLLM_METAL_DEPS_STAMP}" || "${ROOT_DIR}/pyproject.toml" -nt "${VLLM_METAL_DEPS_STAMP}" ]]; then
+  if [[ "${VLLM_METAL_INSTALL_REQUIRED}" == "1" || "${deps_ready}" != "1" || ! -f "${VLLM_METAL_DEPS_STAMP}" || "${ROOT_DIR}/pyproject.toml" -nt "${VLLM_METAL_DEPS_STAMP}" ]]; then
     echo "Installing Audex-Mac dependencies into pinned vLLM Metal runtime"
     "${python_bin}" -m pip install -e "${ROOT_DIR}" >/dev/null
     touch "${VLLM_METAL_DEPS_STAMP}"
@@ -197,7 +221,9 @@ for arg in "$@"; do
   esac
 done
 
-if [[ "${REFRESH_DEPS}" == "0" && -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; then
+ensure_vllm_metal_checkout
+
+if [[ "${REFRESH_DEPS}" == "0" && "${VLLM_METAL_INSTALL_REQUIRED}" == "0" && -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; then
   repair_hidden_pth_files "${VLLM_METAL_VENV_DIR}"
   VLLM_METAL_PYTHONPATH="$(vllm_metal_pythonpath)"
   if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${VLLM_METAL_VENV_DIR}/bin/python" -c "import audex_mac, vllm, vllm_metal" >/dev/null 2>&1; then
@@ -206,9 +232,11 @@ if [[ "${REFRESH_DEPS}" == "0" && -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; the
     PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${VLLM_METAL_VENV_DIR}/bin/python" -m audex_mac.patches.install >/dev/null
     exec_vllm_metal_cli
   fi
+  echo "Existing vLLM Metal environment is incomplete; reinstalling it."
+  VLLM_METAL_INSTALL_REQUIRED=1
 fi
 
-if [[ "${REFRESH_DEPS}" == "1" || ! -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; then
+if [[ "${REFRESH_DEPS}" == "1" || "${VLLM_METAL_INSTALL_REQUIRED}" == "1" || ! -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; then
   ensure_vllm_metal_runtime
   repair_hidden_pth_files "${VLLM_METAL_VENV_DIR}"
   VLLM_METAL_PYTHONPATH="$(vllm_metal_pythonpath)"
