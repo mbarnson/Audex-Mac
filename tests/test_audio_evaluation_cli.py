@@ -136,6 +136,15 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     }
     assert manifest["generation_recipe"]["name"] == "audex_tta_cfg3_xcodec1"
     assert manifest["generation_recipe"]["cfg_scale"] == 3.0
+    assert manifest["oracle_registry"]["signal"]["status"] == "implemented"
+    assert manifest["oracle_registry"]["clap"]["repo_id"] == "laion/clap-htsat-unfused"
+    assert (
+        manifest["oracle_registry"]["ast"]["revision"]
+        == "f826b80d28226b62986cc218e5cec390b1096902"
+    )
+    assert (
+        manifest["oracle_registry"]["openl3_fd"]["status"] == "planned_external_worker"
+    )
     assert manifest["understanding_protocol"]["scoring"].startswith("exact")
     assert environment["hf_token_present"] is True
     assert environment["git"]["available"] is True

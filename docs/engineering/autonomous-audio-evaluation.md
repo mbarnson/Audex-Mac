@@ -474,9 +474,10 @@ Current implementation status:
   selection, Hugging Face snapshot revisions when paths expose them, model-card
   and configured engine context limits, small model/decoder config file hashes,
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
-  pins/omissions, git commit and dirty diff hash, host metadata, and key
-  dependency versions without recording credentials. Semantic generation metrics
-  remain future work; use
+  pins/omissions, planned CLAP/AST/OpenL3 oracle identities and qualification
+  gates, git commit and dirty diff hash, host metadata, and key dependency
+  versions without recording credentials. Semantic generation metrics remain
+  future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior.
 

@@ -278,6 +278,7 @@ def main(
                 **asdict(TtaRecipe()),
             },
             "generation_oracles": args.generation_oracles,
+            "oracle_registry": _oracle_registry_payload(),
             "omitted_datasets": _omitted_datasets(args),
             "source_cases_run": (
                 str(args.cases_from_run) if args.cases_from_run is not None else None
@@ -345,6 +346,50 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "split": pin.split,
         "license": pin.license,
         "expected_rows": pin.expected_rows,
+    }
+
+
+def _oracle_registry_payload() -> dict[str, Any]:
+    return {
+        "signal": {
+            "status": "implemented",
+            "authority": "smoke_structural_signal_only",
+            "semantic_caption_alignment": False,
+        },
+        "clap": {
+            "status": "planned",
+            "repo_id": "laion/clap-htsat-unfused",
+            "revision": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+            "purpose": "caption_alignment_and_retrieval_diagnostics",
+            "qualification_gate": {
+                "calibration": "fixed ESC-50 hard-negative calibration",
+                "min_4way_hard_negative_top1": 0.70,
+                "min_matched_over_foil": 0.85,
+            },
+        },
+        "ast": {
+            "status": "planned",
+            "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
+            "revision": "f826b80d28226b62986cc218e5cec390b1096902",
+            "purpose": "audioset_event_sanity_diagnostics",
+            "qualification_gate": {
+                "calibration": "known pinned calibration split",
+                "logit_policy": "sigmoid over raw logits; AudioSet is multi-label",
+                "device_policy": "explicit device; no silent CPU fallback",
+            },
+        },
+        "openl3_fd": {
+            "status": "planned_external_worker",
+            "implementation": "stable-audio-metrics",
+            "worker_python": "3.11",
+            "purpose": "full_tier_paper_style_fd_openl3",
+            "qualification_gate": {
+                "identical_sets": "near_zero",
+                "permutation_invariance": True,
+                "unrelated_corpora": "materially_worse",
+                "fixed_vectors_reproduce_within_tolerance": True,
+            },
+        },
     }
 
 
