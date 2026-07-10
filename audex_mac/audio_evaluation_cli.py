@@ -21,6 +21,7 @@ from .audio_evaluation_hf import (
     HfDatasetClient,
     fetch_verified_rows,
 )
+from .audio_evaluation_oracles import SignalSanityOracleSuite
 from .audio_evaluation_runner import (
     AudioEvaluationRunner,
     OracleSuite,
@@ -93,6 +94,15 @@ def main(
         default=None,
         help="XCodec torch device; defaults to auto, or set cpu/mps/cuda explicitly",
     )
+    parser.add_argument(
+        "--generation-oracles",
+        choices=("signal", "unqualified"),
+        default="signal",
+        help=(
+            "local generation oracle suite; signal is smoke-level waveform sanity "
+            "only, not semantic caption alignment"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if (
@@ -157,6 +167,7 @@ def main(
                 "profile": args.profile,
                 "path": str(args.model_path) if args.model_path is not None else None,
             },
+            "generation_oracles": args.generation_oracles,
             "datasets": [
                 _pin_payload(pin)
                 for pin in (
@@ -177,7 +188,9 @@ def main(
         return 0
 
     active_runtime_factory = runtime_factory or _load_vllm_runtime
-    active_oracle_suite_factory = oracle_suite_factory or UnqualifiedOracleSuite
+    active_oracle_suite_factory = oracle_suite_factory or _oracle_suite_factory(
+        args.generation_oracles
+    )
     runtime = active_runtime_factory(args.model_path, args.profile)
     if decoder_factory is None:
         assert xcodec_config is not None
@@ -220,3 +233,11 @@ def _load_vllm_runtime(model_path: Path | None, profile: str) -> Any:
     from .vllm_runtime import AudexAsyncVllmRuntime
 
     return AudexAsyncVllmRuntime.from_model_path(model_path)
+
+
+def _oracle_suite_factory(name: str) -> Callable[[], OracleSuite]:
+    if name == "signal":
+        return SignalSanityOracleSuite
+    if name == "unqualified":
+        return UnqualifiedOracleSuite
+    raise ValueError(f"unknown generation oracle suite: {name}")

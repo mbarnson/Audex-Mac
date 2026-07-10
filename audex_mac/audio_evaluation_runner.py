@@ -211,8 +211,10 @@ class AudioEvaluationRunner:
                 "finish_reason": attempt.finish_reason,
             },
         )
+        metric_failures: tuple[str, ...] = ()
         if oracles_qualified and not failures:
             metrics = dict(self._oracles.score(case, attempt))
+            metric_failures = _metric_protocol_failures(metrics)
         else:
             metrics = {
                 "verdict": "UNSCORED",
@@ -223,4 +225,12 @@ class AudioEvaluationRunner:
                 ),
             }
         run.record_generation_metrics(case_id=case.case_id, payload=metrics)
+        failures.extend(f"{case.case_id}: {failure}" for failure in metric_failures)
         return tuple(failures)
+
+
+def _metric_protocol_failures(metrics: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_failures = metrics.get("protocol_failures", ())
+    if not isinstance(raw_failures, (list, tuple)):
+        return ()
+    return tuple(str(failure) for failure in raw_failures if str(failure).strip())

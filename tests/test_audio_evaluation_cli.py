@@ -155,6 +155,8 @@ def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_ora
         [
             "--tier",
             "smoke",
+            "--generation-oracles",
+            "unqualified",
             "--run-root",
             str(tmp_path / "runs"),
             "--run-id",
@@ -186,6 +188,57 @@ def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_ora
     assert first_generation["signal_metrics"]["nonempty"] is True
     assert runtime.one_final_calls == 24
     assert runtime.many_final_calls == 8
+
+
+def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rows_by_repo = _smoke_rows()
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        _write_silent_wav(path)
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=0.1,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "signal-test",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+        runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Verdict: CHARACTERIZED" in output
+    run_dir = tmp_path / "runs" / "signal-test"
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["verdict"] == "CHARACTERIZED"
+    metric = json.loads(
+        (run_dir / "generation" / "metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    assert metric["oracle"] == "signal_sanity"
+    assert metric["verdict"] == "PASS"
 
 
 def test_audio_evaluation_cli_execution_requires_explicit_model_path(
@@ -322,6 +375,11 @@ def _decode_to_silent_wav(inspection: Any, destination: Path, case: Any) -> None
     _write_silent_wav(destination)
 
 
+def _decode_to_tone_wav(inspection: Any, destination: Path, case: Any) -> None:
+    del inspection, case
+    _write_tone_wav(destination)
+
+
 def _write_silent_wav(path: Path) -> None:
     import wave
 
@@ -331,3 +389,19 @@ def _write_silent_wav(path: Path) -> None:
         wav.setsampwidth(2)
         wav.setframerate(16_000)
         wav.writeframes(b"\x00\x00" * 1600)
+
+
+def _write_tone_wav(path: Path) -> None:
+    import math
+    import wave
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = bytearray()
+    for index in range(8000):
+        sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / 16_000))
+        frames.extend(sample.to_bytes(2, "little", signed=True))
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        wav.writeframes(bytes(frames))

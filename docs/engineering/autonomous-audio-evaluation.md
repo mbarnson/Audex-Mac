@@ -438,13 +438,17 @@ Current implementation status:
 - `audex_mac/audio_evaluation_runner.py` executes cases through those adapters,
   records outputs/metrics, and treats structural, signal, oracle, and
   infrastructure failures as protocol failures.
+- `audex_mac/audio_evaluation_oracles.py` contains a smoke-tier signal sanity
+  oracle with deterministic self-tests. It gates finite/nonempty duration,
+  silence, and clipping; it does not score caption alignment.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation. Without `--materialize-only`, it requires
   an explicit local `--model-path` plus `XCODEC1_PATH` or `--xcodec1-path`, runs
   the vLLM understanding/generation adapters, decodes raw 16 kHz XCodec WAVs,
-  and writes run artifacts. Generation metrics remain `UNSCORED` with a
-  protocol failure until local oracle qualification exists.
+  runs the signal-sanity oracle by default, and writes run artifacts. Semantic
+  generation metrics remain future work; use `--generation-oracles unqualified`
+  to force the previous fail-closed placeholder behavior.
 
 Relevant current repo contracts:
 
@@ -492,11 +496,12 @@ audex-mac eval-audio-capabilities --tier smoke \
   --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
 ```
 
-This command is expected to return non-zero today because generation oracles are
-not yet qualified. Use it to inspect decoded artifacts and structural/signal
-failures, not to publish pass/fail capability claims.
+This command can return `CHARACTERIZED` when the local smoke pipeline completes
+and the signal-sanity oracle passes. It does not publish semantic text-to-audio
+quality claims; use it to inspect decoded artifacts and structural/signal
+failures.
 
-Likely future commands, after the oracle qualification path exists:
+Likely future commands, after semantic oracle qualification exists:
 
 ```sh
 audex-mac eval-audio-capabilities --tier smoke --model 30b

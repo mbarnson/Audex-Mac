@@ -75,6 +75,17 @@ class FakeOracleSuite:
         return {"clap_score": 0.71, "hard_foil_won": True}
 
 
+class FailingMetricOracleSuite(FakeOracleSuite):
+    def score(
+        self, case: AudioEvaluationCase, attempt: GenerationAttempt
+    ) -> dict[str, object]:
+        del case, attempt
+        return {
+            "verdict": "FAIL",
+            "protocol_failures": ["audible_peak"],
+        }
+
+
 def _understanding_case() -> AudioEvaluationCase:
     return AudioEvaluationCase(
         case_id="mmau-1",
@@ -230,3 +241,27 @@ def test_unqualified_generation_oracle_fails_closed(tmp_path: Path) -> None:
         "reason": "oracle_not_qualified",
         "verdict": "UNSCORED",
     }
+
+
+@pytest.mark.fast
+def test_runner_promotes_oracle_protocol_failures(tmp_path: Path) -> None:
+    case = _generation_case()
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="oracle-failure",
+        tier="smoke",
+        master_seed=55,
+        cases=(case,),
+        manifest_metadata={},
+    )
+    raw_wav = tmp_path / "raw.wav"
+    raw_wav.write_bytes(b"RIFF-fixture")
+
+    summary = AudioEvaluationRunner(
+        understanding=FakeUnderstandingAdapter(),
+        generation=FakeGenerationAdapter(raw_wav),
+        oracles=FailingMetricOracleSuite(),
+    ).run(run, master_seed=55)
+
+    assert summary.verdict is RunVerdict.PROTOCOL_FAIL
+    assert "audiocaps-1: audible_peak" in summary.protocol_failures
