@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "conversational_narrative",
+      "category": "conversational",
+      "text": "Yesterday morning, I carried a mug of coffee onto the porch and watched the fog lift slowly from the cedar trees. A delivery truck stopped at the corner, the neighbor's dog announced its arrival, and somewhere down the block a child laughed. Nothing important happened, but for five quiet minutes the whole neighborhood seemed perfectly awake.",
+      "required_terms": ["delivery truck", "neighbor's dog", "perfectly awake"]
+    },
+    {
+      "id": "proper_names",
+      "category": "pronunciation",
+      "text": "Saoirse Ronan and Timothée Chalamet met Niamh O'Sullivan near the old market in Worcestershire before taking an evening train toward Reykjavík. Their guide, Joaquín Gutiérrez, recommended a small restaurant run by Siobhán and François. By dessert, everyone was comparing the weather in Ljubljana, São Paulo, and rural Massachusetts.",
+      "required_terms": ["Saoirse Ronan", "Timothée Chalamet", "Worcestershire", "Reykjavík", "Joaquín Gutiérrez"]
+    },
+    {
+      "id": "numbers_identifiers",
+      "category": "precision",
+      "text": "At 9:47 a.m. on July 18th, build A7F9 processed 5,120 tokens at 16 kilohertz, using a frame hop of 320 samples. Version 2.3.1 reduced peak memory from 74.6 gigabytes to 61.2, while request ID BQ-2048 completed in 3.75 seconds with a 99.2 percent confidence score.",
+      "required_terms": ["A7F9", "5,120", "16 kilohertz", "2.3.1", "BQ-2048", "99.2 percent"]
+    },
+    {
+      "id": "technical_vocabulary",
+      "category": "pronunciation",
+      "text": "The otorhinolaryngologist reviewed an electroencephalography report while the computational linguist explained autoregressive tokenization, spectrotemporal reconstruction, and nonpaged key-value caching. Their multidisciplinary discussion covered mitochondrial heteroplasmy, magnetohydrodynamics, and the practical difference between idempotency and commutativity. Surprisingly, the hardest phrase to repeat clearly was probabilistically synchronized parallelism.",
+      "required_terms": ["otorhinolaryngologist", "electroencephalography", "spectrotemporal", "magnetohydrodynamics", "idempotency", "commutativity"]
+    },
+    {
+      "id": "expressive_dialogue",
+      "category": "prosody",
+      "text": "Mara lowered her voice and asked, “Did you really delete the only backup?” Jonah paused—far too long—then answered, “No, I moved it.” “Moved it where?” she demanded. He pointed toward the humming server rack and whispered, “To the machine marked do not unplug.” Mara stared at him, sighed, and said, “That is not remotely reassuring.”",
+      "required_terms": ["only backup", "moved it where", "do not unplug", "not remotely reassuring"]
+    },
+    {
+      "id": "long_form_stability",
+      "category": "stability",
+      "text": "A reliable local speech system has to do several ordinary things well at the same time. It must preserve the user's meaning, begin speaking before patience runs out, pronounce unfamiliar terms without collapsing, and finish each thought cleanly. Speed matters, but speed without intelligibility is merely a faster failure. The useful system is the one that stays coherent through long explanations, abrupt questions, quoted dialogue, and the occasional sentence that takes an unexpected turn before arriving, calmly, at its point.",
+      "required_terms": ["preserve the user's meaning", "speed without intelligibility", "quoted dialogue", "unexpected turn"]
+    }
+  ]
+}

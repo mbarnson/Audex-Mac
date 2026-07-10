@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+.env
+.env.*
+
+# Local bootstrap/runtime state
+.audex/
+logs/
+runs/
+tmp/
+*.log
+
+# Model/cache artifacts: never commit downloaded model weights.
+models/
+checkpoints/
+hf_cache/
+huggingface_cache/
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+*.onnx
+*.mlmodel
+*.mlmodelc/
+
+# Audio captures and generated media from local runs.
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.aiff
+*.aif
+*.caf
+*.ogg
+*.webm
+*.pcm
+
+# macOS/editor
+.DS_Store
+.idea/
+.vscode/
+Apple-Silicon-CPU-Optimization-Guide.pdf
+LLM_Inference_Apple_Silicon_2511.05502.pdf

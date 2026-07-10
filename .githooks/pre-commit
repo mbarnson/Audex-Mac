@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "${ROOT_DIR}"
+
+echo "Audex-Mac pre-commit: lint"
+scripts/lint.sh
+
+echo "Audex-Mac pre-commit: fast tests"
+.venv/bin/python -m pytest
+
+echo "Audex-Mac pre-commit: ok"

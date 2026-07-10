@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "audex-mac"
+version = "0.1.0"
+description = "Native local Apple Silicon demo for NVIDIA Audex speech-to-speech."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "huggingface_hub>=0.36.0",
+  "prompt-toolkit>=3.0.52,<4",
+  "sounddevice>=0.5.0",
+]
+
+[project.optional-dependencies]
+oracle = [
+  "mlx-audio==0.3.1",
+]
+dev = [
+  "black>=25.0.0",
+  "pytest>=9.0.0",
+  "pytest-bdd>=8.0.0",
+  "ruff>=0.14.0",
+]
+
+[project.scripts]
+audex-mac = "audex_mac.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "fast: tests that do not require model weights, network, or audio hardware",
+  "slow: tests that may take substantial time",
+  "local_model: tests that require local model snapshots",
+  "audio_device: tests that require microphone/speaker access",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py312", "py313"]
+extend-exclude = '''
+/(
+  \.audex
+  | \.venv
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [
+  ".audex",
+  ".venv",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+  "E501",
+]

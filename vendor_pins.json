@@ -1,0 +1,8 @@
+{
+  "vllm_metal": {
+    "repo": "https://github.com/vllm-project/vllm-metal",
+    "pinned_commit": "cd72e7d6d5c3eec452afe2693c3a45a0564d7650",
+    "install_url": "git+https://github.com/vllm-project/vllm-metal.git@cd72e7d6d5c3eec452afe2693c3a45a0564d7650",
+    "pin_note": "Audex-Mac demo pin. Update only through docs/engineering/patches.md-guided patch review."
+  }
+}

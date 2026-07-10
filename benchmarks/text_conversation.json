@@ -1,0 +1,67 @@
+{
+  "name": "audex_mac_text_conversation_v1",
+  "description": "Ten-turn coding/basic-reasoning benchmark for Audex-Mac text-only gate.",
+  "source_note": "Sampler values follow NVIDIA's Audex-2B text-only vLLM example defaults where applicable; speech/STT/TTS task samplers must follow their own model-card/script guidance.",
+  "sampler_reference": "https://huggingface.co/nvidia/Nemotron-Labs-Audex-2B/resolve/main/inference_scripts_vllm/textonly_scripts/run_text_vllm_example.py",
+  "generation": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "seed": 100,
+    "max_tokens": 4096,
+    "thinking_enabled": false,
+    "assistant_prefix": "<think></think>"
+  },
+  "system": "You are a concise coding assistant. Answer directly. When asked for code, provide runnable code.",
+  "turns": [
+    {
+      "role": "user",
+      "content": "Write a Python function `is_palindrome(s: str) -> bool` that ignores case and non-alphanumeric characters. Include 3 simple tests."
+    },
+    {
+      "role": "user",
+      "content": "Now explain why your function handles \"A man, a plan, a canal: Panama!\" correctly."
+    },
+    {
+      "role": "user",
+      "content": "Modify the function to treat accented characters by normalizing them to ASCII where possible."
+    },
+    {
+      "role": "user",
+      "content": "Give me a small table of inputs and expected outputs for the updated function."
+    },
+    {
+      "role": "user",
+      "content": "Write a Python function `chunked(iterable, size)` that yields lists of length `size`, with a shorter final chunk allowed."
+    },
+    {
+      "role": "user",
+      "content": "What edge cases should `chunked` reject or handle? Be specific."
+    },
+    {
+      "role": "user",
+      "content": "Now write a combined mini-module containing both functions, type hints, docstrings, and a `__main__` smoke test."
+    },
+    {
+      "role": "user",
+      "content": "Review your mini-module for bugs. If you find any, show a corrected version."
+    },
+    {
+      "role": "user",
+      "content": "Given this list `[3, 1, 4, 1, 5, 9, 2]`, show how `chunked(values, 3)` evaluates step by step."
+    },
+    {
+      "role": "user",
+      "content": "Summarize the two APIs in under 12 bullet points, including complexity and failure modes."
+    }
+  ],
+  "pass_criteria": [
+    "No excessive repetition.",
+    "Maintains context across all 10 turns.",
+    "Code is syntactically plausible Python.",
+    "Handles size <= 0 deliberately.",
+    "Normalization uses a viable approach such as unicodedata.normalize.",
+    "Step-by-step chunking output is [[3, 1, 4], [1, 5, 9], [2]].",
+    "Final summary matches the latest version of the code."
+  ]
+}
+
