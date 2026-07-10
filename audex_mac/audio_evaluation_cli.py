@@ -146,6 +146,16 @@ def main(
         ),
     )
     parser.add_argument(
+        "--capability-target",
+        action="append",
+        default=None,
+        metavar="NAME=VALUE",
+        help=(
+            "numeric pass/fail target, repeatable; names must end in _min or _max "
+            "and refer to summary metrics such as accuracy_min"
+        ),
+    )
+    parser.add_argument(
         "--skip-esc50",
         action="store_true",
         help=(
@@ -163,8 +173,16 @@ def main(
         ),
     )
     args = parser.parse_args(argv)
+    try:
+        capability_targets = _parse_capability_targets(
+            tuple(args.capability_target or ())
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.materialize_only and args.cases_from_run is not None:
         parser.error("--cases-from-run is only valid for execution runs")
+    if args.materialize_only and capability_targets:
+        parser.error("--capability-target is only valid for execution runs")
     if args.tier in {"standard", "full"} and not args.materialize_only:
         parser.error(
             f"{args.tier} execution is blocked until semantic generation oracles "
@@ -289,6 +307,7 @@ def main(
                 **asdict(TtaRecipe()),
             },
             "generation_oracles": args.generation_oracles,
+            "capability_targets": capability_targets,
             "oracle_registry": _oracle_registry_payload(),
             "omitted_datasets": _omitted_datasets(args),
             "source_cases_run": (
@@ -340,7 +359,11 @@ def main(
             decode_to_wav=decoder,
         ),
         oracles=active_oracle_suite_factory(),
-    ).run(run, master_seed=args.master_seed)
+    ).run(
+        run,
+        master_seed=args.master_seed,
+        capability_targets=capability_targets,
+    )
     _write_completed_generation_worker_requests(run)
     print(f"Audio evaluation run: {run.run_dir}")
     print(f"Cases: {len(cases)}")
@@ -348,7 +371,7 @@ def main(
     print(f"Verdict: {summary.verdict.value}")
     for failure in summary.protocol_failures:
         print(f"Protocol failure: {failure}")
-    return 0 if summary.verdict is RunVerdict.CHARACTERIZED else 2
+    return 0 if summary.verdict in {RunVerdict.CHARACTERIZED, RunVerdict.PASS} else 2
 
 
 def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
@@ -360,6 +383,30 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "license": pin.license,
         "expected_rows": pin.expected_rows,
     }
+
+
+def _parse_capability_targets(raw_targets: tuple[str, ...]) -> dict[str, float]:
+    targets: dict[str, float] = {}
+    for raw_target in raw_targets:
+        name, separator, raw_value = str(raw_target).partition("=")
+        name = name.strip()
+        raw_value = raw_value.strip()
+        if not separator or not name or not raw_value:
+            raise ValueError(
+                "capability targets must be formatted as NAME=VALUE, "
+                f"got {raw_target!r}"
+            )
+        if not name.endswith(("_min", "_max")):
+            raise ValueError(f"capability target {name!r} must end in _min or _max")
+        if name in targets:
+            raise ValueError(f"duplicate capability target: {name}")
+        try:
+            targets[name] = float(raw_value)
+        except ValueError as exc:
+            raise ValueError(
+                f"capability target {name!r} must have a numeric value"
+            ) from exc
+    return targets
 
 
 def _oracle_registry_payload() -> dict[str, Any]:

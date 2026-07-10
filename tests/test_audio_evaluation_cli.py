@@ -593,6 +593,105 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     }
 
 
+def test_audio_evaluation_cli_passes_explicit_capability_targets(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rows_by_repo = _smoke_rows()
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        _write_silent_wav(path)
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=0.1,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--skip-esc50",
+            "--skip-song-describer",
+            "--capability-target",
+            "technical_failure_rate_max=0.0",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "target-pass",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+        runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+    )
+
+    assert exit_code == 0
+    assert "Verdict: PASS" in capsys.readouterr().out
+    run_dir = tmp_path / "runs" / "target-pass"
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert summary["verdict"] == "PASS"
+    assert summary["capability_targets"] == {"technical_failure_rate_max": 0.0}
+    assert manifest["capability_targets"] == {"technical_failure_rate_max": 0.0}
+
+
+def test_audio_evaluation_cli_reports_capability_failure_for_missed_targets(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rows_by_repo = _smoke_rows()
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        _write_silent_wav(path)
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=0.1,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--skip-esc50",
+            "--skip-song-describer",
+            "--capability-target",
+            "accuracy_min=1.1",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "target-fail",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+        runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+    )
+
+    assert exit_code == 2
+    assert "Verdict: CAPABILITY_FAIL" in capsys.readouterr().out
+    summary = json.loads(
+        (tmp_path / "runs" / "target-fail" / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["verdict"] == "CAPABILITY_FAIL"
+    assert summary["capability_failures"] == ["accuracy_min:1<1.1"]
+
+
 def test_audio_evaluation_cli_executes_from_materialized_case_run(
     tmp_path: Path,
 ) -> None:

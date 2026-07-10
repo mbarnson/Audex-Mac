@@ -171,6 +171,32 @@ def test_runner_executes_mixed_smoke_run_and_records_scores(tmp_path: Path) -> N
 
 
 @pytest.mark.fast
+def test_runner_passes_capability_targets_to_summary(tmp_path: Path) -> None:
+    cases = (_understanding_case(),)
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="targeted-runner",
+        tier="smoke",
+        master_seed=55,
+        cases=cases,
+        manifest_metadata={"model": {"repository": "fixture/audex"}},
+    )
+
+    summary = AudioEvaluationRunner(
+        understanding=FakeUnderstandingAdapter(),
+        generation=FakeGenerationAdapter(tmp_path / "unused.wav"),
+        oracles=FakeOracleSuite(),
+    ).run(
+        run,
+        master_seed=55,
+        capability_targets={"accuracy_min": 1.0},
+    )
+
+    assert summary.verdict is RunVerdict.PASS
+    assert summary.capability_targets == {"accuracy_min": 1.0}
+
+
+@pytest.mark.fast
 def test_runner_marks_structural_failure_as_protocol_failure(tmp_path: Path) -> None:
     case = _generation_case()
     run = AudioEvaluationRun.create(

@@ -101,6 +101,7 @@ class AudioEvaluationRunner:
         run: AudioEvaluationRun,
         *,
         master_seed: int,
+        capability_targets: Mapping[str, float] | None = None,
     ) -> AudioEvaluationSummary:
         generation_cases = tuple(
             case for case in run.cases if case.track is EvaluationTrack.GENERATION
@@ -146,6 +147,7 @@ class AudioEvaluationRunner:
         return run.finalize(
             required_oracles_qualified=qualification.qualified,
             protocol_failures=tuple(protocol_failures),
+            capability_targets=capability_targets,
         )
 
     def _run_understanding_case(

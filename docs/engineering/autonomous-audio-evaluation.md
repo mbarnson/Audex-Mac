@@ -519,7 +519,9 @@ Current implementation status:
   `generation/openl3-request.json`; completed generation runs write
   `generation/clap-request.json` using actual generated WAV paths. AST request
   writing remains blocked on explicit AudioSet label-map fixtures so labels are
-  not inferred from captions implicitly.
+  not inferred from captions implicitly. Execution runs can opt into pass/fail
+  verdicts with repeatable `--capability-target NAME=VALUE` arguments; without
+  explicit targets, successful runs remain `CHARACTERIZED`.
 
 Relevant current repo contracts:
 
