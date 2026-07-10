@@ -46,6 +46,7 @@ from .audio_evaluation_suite import (
     MMAU_PIN,
     SONG_DESCRIBER_PIN,
     build_smoke_cases_from_rows,
+    build_standard_cases_from_rows,
 )
 from .audio_evaluation_xcodec import (
     XCodec1Config,
@@ -87,7 +88,7 @@ def main(
     parser = argparse.ArgumentParser(
         description="Prepare or run autonomous Audex audio-capability evaluation"
     )
-    parser.add_argument("--tier", choices=("smoke",), required=True)
+    parser.add_argument("--tier", choices=("smoke", "standard"), required=True)
     parser.add_argument(
         "--materialize-only",
         action="store_true",
@@ -135,7 +136,7 @@ def main(
         "--skip-esc50",
         action="store_true",
         help=(
-            "explicitly omit ESC-50 smoke cases when the pinned Hugging Face rows "
+            "explicitly omit ESC-50 cases when the pinned Hugging Face rows "
             "endpoint is unavailable; records the omission in the manifest"
         ),
     )
@@ -143,7 +144,7 @@ def main(
         "--skip-song-describer",
         action="store_true",
         help=(
-            "explicitly omit optional SongDescriber smoke cases when the pinned "
+            "explicitly omit optional SongDescriber cases when the pinned "
             "Hugging Face rows endpoint is unavailable; records the omission in "
             "the manifest"
         ),
@@ -151,6 +152,11 @@ def main(
     args = parser.parse_args(argv)
     if args.materialize_only and args.cases_from_run is not None:
         parser.error("--cases-from-run is only valid for execution runs")
+    if args.tier == "standard" and not args.materialize_only:
+        parser.error(
+            "standard execution is blocked until semantic generation oracles "
+            "are implemented; use --materialize-only to prepare the manifest"
+        )
 
     if args.model == "2b" and args.profile == "nvfp4":
         parser.error("--profile nvfp4 is only defined for --model 30b")
@@ -224,7 +230,8 @@ def main(
             )
         else:
             song_rows = active_fetch(SONG_DESCRIBER_PIN)
-        cases = build_smoke_cases_from_rows(
+        cases = _build_cases_from_rows(
+            tier=args.tier,
             mmau_rows=tuple(mmau_rows),
             esc50_rows=tuple(esc50_rows),
             audiocaps_rows=tuple(audiocaps_rows),
@@ -324,6 +331,37 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "license": pin.license,
         "expected_rows": pin.expected_rows,
     }
+
+
+def _build_cases_from_rows(
+    *,
+    tier: str,
+    mmau_rows: tuple[Mapping[str, Any], ...],
+    esc50_rows: tuple[Mapping[str, Any], ...],
+    audiocaps_rows: tuple[Mapping[str, Any], ...],
+    song_describer_rows: tuple[Mapping[str, Any], ...],
+    master_seed: int,
+    materialize_audio: Callable[[Mapping[str, Any]], MaterializedAudio],
+) -> tuple[AudioEvaluationCase, ...]:
+    if tier == "smoke":
+        return build_smoke_cases_from_rows(
+            mmau_rows=mmau_rows,
+            esc50_rows=esc50_rows,
+            audiocaps_rows=audiocaps_rows,
+            song_describer_rows=song_describer_rows,
+            master_seed=master_seed,
+            materialize_audio=materialize_audio,
+        )
+    if tier == "standard":
+        return build_standard_cases_from_rows(
+            mmau_rows=mmau_rows,
+            esc50_rows=esc50_rows,
+            audiocaps_rows=audiocaps_rows,
+            song_describer_rows=song_describer_rows,
+            master_seed=master_seed,
+            materialize_audio=materialize_audio,
+        )
+    raise ValueError(f"unsupported audio evaluation tier: {tier}")
 
 
 def _environment_payload(

@@ -427,8 +427,9 @@ Current implementation status:
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
 - `audex_mac/audio_evaluation_suite.py` defines the pinned smoke-suite
-  constants and deterministic pre-download selection. The current ESC-50 foil
-  map is valid and deterministic, but still needs semantic hard-negative
+  constants, the Standard-tier local regression manifest, local structured
+  control prompts, and deterministic pre-download selection. The current ESC-50
+  foil map is valid and deterministic, but still needs semantic hard-negative
   refinement before standard/full claims.
 - `audex_mac/audio_evaluation_adapters.py` contains the Audex vLLM
   understanding adapter and a TTA adapter that builds CFG3 XCodec token streams.
@@ -447,17 +448,20 @@ Current implementation status:
   silence, and clipping; it does not score caption alignment.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
-  pinned manifest/cache preparation. Without `--materialize-only`, it resolves
-  the selected already-cached Audex speech checkpoint, or accepts an explicit
-  `--model-path` override. It still requires `XCODEC1_PATH` or
-  `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes raw
-  16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes run
-  artifacts. The smoke manifest/environment records model selection, Hugging
-  Face snapshot revisions when paths expose them, model-card and configured
-  engine context limits, the pinned CFG3 TTA recipe, constrained-answer scoring
-  protocol, dataset pins/omissions, git commit and dirty diff hash, host
-  metadata, and key dependency versions without recording credentials. Semantic
-  generation metrics remain future work; use
+  pinned manifest/cache preparation and
+  `audex-mac eval-audio-capabilities --tier standard --materialize-only` for the
+  Standard manifest/cache. Standard execution is intentionally blocked until
+  semantic generation oracles exist. Without `--materialize-only`, smoke
+  execution resolves the selected already-cached Audex speech checkpoint, or
+  accepts an explicit `--model-path` override. It still requires `XCODEC1_PATH`
+  or `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes
+  raw 16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes
+  run artifacts. The smoke/standard manifest/environment records model
+  selection, Hugging Face snapshot revisions when paths expose them, model-card
+  and configured engine context limits, the pinned CFG3 TTA recipe,
+  constrained-answer scoring protocol, dataset pins/omissions, git commit and
+  dirty diff hash, host metadata, and key dependency versions without recording
+  credentials. Semantic generation metrics remain future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior.
 
@@ -550,7 +554,6 @@ Likely future commands, after semantic oracle qualification exists:
 
 ```sh
 audex-mac eval-audio-capabilities --tier smoke --model 30b
-audex-mac eval-audio-capabilities --tier standard --model 30b --profile nvfp4
 audex-mac eval-audio-capabilities --tier full --model 30b --profile bf16
 ```
 

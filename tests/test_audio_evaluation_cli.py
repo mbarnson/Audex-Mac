@@ -300,6 +300,87 @@ def test_audio_evaluation_cli_can_explicitly_skip_optional_song_describer(
     ]
 
 
+def test_audio_evaluation_cli_materializes_standard_manifest(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _standard_rows()
+    fetched_repos: list[str] = []
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        fetched_repos.append(pin.repo_id)
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "standard",
+            "--materialize-only",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "standard-test",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    assert fetched_repos == [
+        "TwinkStart/MMAU",
+        "ashraq/esc50",
+        "d0rj/audiocaps",
+        "renumics/song-describer-dataset",
+    ]
+    run_dir = tmp_path / "runs" / "standard-test"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["tier"] == "standard"
+    assert manifest["case_count"] == 652
+    generation_cases = (run_dir / "generation" / "cases.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert generation_cases.count("\n") == 152
+    assert "audex-mac/ualm-inspired-controls" in generation_cases
+
+
+def test_audio_evaluation_cli_blocks_standard_execution_until_semantic_oracles(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        audio_evaluation_cli.main(
+            [
+                "--tier",
+                "standard",
+                "--run-root",
+                str(tmp_path / "runs"),
+            ],
+            fetch_rows=lambda *_args, **_kwargs: (),
+            materialize_audio=lambda _row: MaterializedAudio(
+                path="fixture.wav",
+                sha256="sha",
+                sample_rate=16_000,
+                duration_seconds=1.0,
+            ),
+        )
+
+    assert "semantic generation oracles" in capsys.readouterr().err
+
+
 def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_oracles(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -602,6 +683,27 @@ def _smoke_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
         ),
         "renumics/song-describer-dataset": tuple(
             _song_row(index, f"SongDescriber caption {index}") for index in range(4)
+        ),
+    }
+
+
+def _standard_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
+    return {
+        "TwinkStart/MMAU": tuple(
+            _mmau_row(f"{task}-{index}", task)
+            for task in ("sound", "music")
+            for index in range(130)
+        ),
+        "ashraq/esc50": tuple(
+            _esc_row(f"class-{category:02d}-{index}.wav", f"class-{category:02d}")
+            for category in range(50)
+            for index in range(5)
+        ),
+        "d0rj/audiocaps": tuple(
+            _caption_row(index, f"AudioCaps caption {index}") for index in range(70)
+        ),
+        "renumics/song-describer-dataset": tuple(
+            _song_row(index, f"SongDescriber caption {index}") for index in range(70)
         ),
     }
 
