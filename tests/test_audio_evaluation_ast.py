@@ -14,6 +14,11 @@ from audex_mac.audio_evaluation_ast import (
     load_ast_worker_result,
     write_ast_worker_request,
 )
+from audex_mac.audio_evaluation_ast_labels import (
+    PINNED_AST_LABEL_FIXTURE_VOCABULARY,
+    STRUCTURED_CONTROL_AST_LABELS,
+    explicit_ast_label_maps,
+)
 from audex_mac.audio_evaluation_ast_worker import run_worker
 
 pytestmark = pytest.mark.fast
@@ -22,6 +27,7 @@ pytestmark = pytest.mark.fast
 def _generation_case(
     *,
     case_id: str = "control-quantity-01",
+    source_row_id: str | None = None,
     caption: str = "A dog barks twice.",
 ) -> AudioEvaluationCase:
     return AudioEvaluationCase(
@@ -31,7 +37,7 @@ def _generation_case(
         dataset_revision="rev1",
         dataset_config="default",
         dataset_split="test",
-        source_row_id=case_id,
+        source_row_id=source_row_id or case_id,
         source_row_hash=f"hash-{case_id}",
         license="CC0",
         category="structured-control",
@@ -39,6 +45,32 @@ def _generation_case(
         caption=caption,
         tags=("control:quantity", "generation:structured-control"),
     )
+
+
+def test_structured_control_ast_labels_match_the_pinned_checkpoint_vocabulary() -> None:
+    used_labels = {
+        label
+        for expected_and_forbidden in STRUCTURED_CONTROL_AST_LABELS.values()
+        for labels in expected_and_forbidden
+        for label in labels
+    }
+
+    assert used_labels <= PINNED_AST_LABEL_FIXTURE_VOCABULARY
+    assert "Liquid" in used_labels
+    assert "Wind noise (microphone)" in used_labels
+
+
+def test_explicit_ast_label_maps_cover_only_hand_authored_control_cases() -> None:
+    labeled = _generation_case(source_row_id="quantity-01")
+    unlabeled = _generation_case(
+        case_id="audiocaps-1",
+        source_row_id="audiocaps-1",
+    )
+
+    expected, forbidden = explicit_ast_label_maps((labeled, unlabeled))
+
+    assert expected == {labeled.case_id: ("Dog", "Bark")}
+    assert forbidden == {labeled.case_id: ("Speech", "Music")}
 
 
 def test_ast_worker_request_requires_explicit_expected_labels(

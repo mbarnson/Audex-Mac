@@ -26,7 +26,13 @@ from .audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
 )
-from .audio_evaluation_ast import AST_REPO_ID, AST_REVISION
+from .audio_evaluation_ast import (
+    AST_REPO_ID,
+    AST_REVISION,
+    build_ast_case_requests,
+    write_ast_worker_request,
+)
+from .audio_evaluation_ast_labels import explicit_ast_label_maps
 from .audio_evaluation_clap import (
     CLAP_REPO_ID,
     CLAP_REVISION,
@@ -522,6 +528,19 @@ def _write_completed_generation_worker_requests(run: AudioEvaluationRun) -> None
             run.run_dir / "generation" / "clap-request.json",
             run_id=run.run_dir.name,
             requests=clap_requests,
+        )
+    expected_labels, forbidden_labels = explicit_ast_label_maps(cases)
+    labeled_cases = tuple(case for case in cases if case.case_id in expected_labels)
+    if labeled_cases:
+        write_ast_worker_request(
+            run.run_dir / "generation" / "ast-request.json",
+            run_id=run.run_dir.name,
+            requests=build_ast_case_requests(
+                labeled_cases,
+                generated_wav_by_case_id=generated_wavs,
+                expected_labels_by_case_id=expected_labels,
+                forbidden_labels_by_case_id=forbidden_labels,
+            ),
         )
 
 

@@ -11,6 +11,11 @@ from typing import Any
 import pytest
 
 from audex_mac import audio_evaluation_cli, cli
+from audex_mac.audio_evaluation import (
+    AudioEvaluationCase,
+    AudioEvaluationRun,
+    EvaluationTrack,
+)
 from audex_mac.audio_evaluation_datasets import MaterializedAudio
 from audex_mac.audio_evaluation_hf import DatasetPin
 from audex_mac.vllm_runtime import VllmRequestResult
@@ -591,6 +596,62 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
         .read_text(encoding="utf-8")
         .splitlines()
     }
+
+
+def test_audio_evaluation_cli_writes_ast_request_for_labeled_controls(
+    tmp_path: Path,
+) -> None:
+    case = AudioEvaluationCase(
+        case_id="control-quantity-01",
+        track=EvaluationTrack.GENERATION,
+        dataset_id="audex-mac/ualm-inspired-controls",
+        dataset_revision="2026-07-10",
+        dataset_config="ualm-inspired",
+        dataset_split="standard",
+        source_row_id="quantity-01",
+        source_row_hash="hash-control-quantity-01",
+        license="local-synthetic-evaluation-prompts",
+        category="structured-control",
+        prompt="Three dogs bark one after another in a small room.",
+        caption="Three dogs bark one after another in a small room.",
+        hard_foil_caption="A piano plays one quiet note.",
+        tags=("control:quantity", "generation:structured-control"),
+    )
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="completed-control",
+        tier="standard",
+        master_seed=20260710,
+        cases=(case,),
+        manifest_metadata={"model": {"repo_id": "fixture/audex"}},
+    )
+    enhanced_path = run.run_dir / "media" / "enhanced" / "control-quantity-01.wav"
+    enhanced_path.write_bytes(b"RIFF fixture")
+    run.record_output(
+        case_id=case.case_id,
+        payload={
+            "enhanced_wav_path": str(enhanced_path),
+            "raw_wav_path": None,
+            "structurally_valid": True,
+            "signal_metrics": {"finite": True, "nonempty": True},
+        },
+    )
+
+    audio_evaluation_cli._write_completed_generation_worker_requests(run)
+
+    ast_request = json.loads(
+        (run.run_dir / "generation" / "ast-request.json").read_text(encoding="utf-8")
+    )
+    assert ast_request["run_id"] == "completed-control"
+    assert ast_request["requests"] == [
+        {
+            "case_id": "control-quantity-01",
+            "expected_labels": ["Dog", "Bark"],
+            "forbidden_labels": ["Speech", "Music"],
+            "generated_wav_path": str(enhanced_path),
+        }
+    ]
+    assert (run.run_dir / "generation" / "clap-request.json").is_file()
 
 
 def test_audio_evaluation_cli_passes_explicit_capability_targets(

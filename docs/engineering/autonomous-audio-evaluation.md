@@ -486,9 +486,11 @@ Current implementation status:
   `audex_mac/audio_evaluation_ast_worker.py` define the isolated AST worker
   request/command/result boundary for AudioSet-style event sanity checks. The
   request contract requires explicit expected and optional forbidden labels per
-  generated WAV rather than deriving labels from captions implicitly. The worker
-  currently fails loud with `UNSCORED`; pinned label-map handling, calibration,
-  and scoring remain future work.
+  generated WAV rather than deriving labels from captions implicitly.
+  `audex_mac/audio_evaluation_ast_labels.py` provides explicit AST labels for
+  the local structured-control prompts only. The worker currently fails loud
+  with `UNSCORED`; pinned label-map validation, calibration, and scoring remain
+  future work.
 - `audex_mac/audio_evaluation_openl3.py` and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
   worker request/command/result boundary and fail loudly outside Python 3.11 or
@@ -519,11 +521,13 @@ Current implementation status:
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior. Standard/Full materialization writes
   `generation/openl3-request.json`; completed generation runs write
-  `generation/clap-request.json` using actual generated WAV paths. AST request
-  writing remains blocked on explicit AudioSet label-map fixtures so labels are
-  not inferred from captions implicitly. Execution runs can opt into pass/fail
-  verdicts with repeatable `--capability-target NAME=VALUE` arguments; without
-  explicit targets, successful runs remain `CHARACTERIZED`.
+  `generation/clap-request.json` using actual generated WAV paths and write
+  `generation/ast-request.json` for generated cases with explicit local
+  structured-control AST labels. Broader AST label-map fixtures remain future
+  work so labels are not inferred from arbitrary captions implicitly. Execution
+  runs can opt into pass/fail verdicts with repeatable
+  `--capability-target NAME=VALUE` arguments; without explicit targets,
+  successful runs remain `CHARACTERIZED`.
 
 Relevant current repo contracts:
 
