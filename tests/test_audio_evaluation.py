@@ -49,6 +49,7 @@ def _generation_case(case_id: str, category: str = "audiocaps") -> AudioEvaluati
         category=category,
         prompt="A dog barks twice.",
         caption="A dog barks twice.",
+        tags=("generation:caption",),
     )
 
 
@@ -159,6 +160,38 @@ def test_run_artifacts_require_complete_outputs_before_characterizing(
     assert summary["verdict"] == "CHARACTERIZED"
     assert (run.run_dir / "understanding" / "cases.jsonl").is_file()
     assert (run.run_dir / "understanding" / "outputs.jsonl").is_file()
+
+
+@pytest.mark.fast
+def test_run_artifacts_record_case_tags(tmp_path: Path) -> None:
+    case = AudioEvaluationCase(
+        case_id="tagged-generation-1",
+        track=EvaluationTrack.GENERATION,
+        dataset_id="fixture/captions",
+        dataset_revision="def456",
+        dataset_config="default",
+        dataset_split="test",
+        source_row_id="tagged-generation-1",
+        source_row_hash="hash-tagged-generation-1",
+        license="CC-BY-4.0",
+        category="structured-control",
+        prompt="A timer beeps twice.",
+        caption="A timer beeps twice.",
+        tags=("control:quantity", "generation:structured-control"),
+    )
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="tagged-run",
+        tier="smoke",
+        master_seed=17,
+        cases=(case,),
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+
+    payload = json.loads(
+        (run.run_dir / "generation" / "cases.jsonl").read_text(encoding="utf-8")
+    )
+    assert payload["tags"] == ["control:quantity", "generation:structured-control"]
 
 
 @pytest.mark.fast

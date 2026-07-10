@@ -46,6 +46,7 @@ class AudioEvaluationCase:
     caption: str | None = None
     hard_foil_caption: str | None = None
     choices: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         required = {
@@ -63,6 +64,9 @@ class AudioEvaluationCase:
         missing = [name for name, value in required.items() if not str(value).strip()]
         if missing:
             raise ValueError(f"audio evaluation case has empty fields: {missing}")
+        empty_tags = [tag for tag in self.tags if not str(tag).strip()]
+        if empty_tags:
+            raise ValueError("audio evaluation case has empty tags")
         if self.track is EvaluationTrack.UNDERSTANDING:
             if not self.audio_path:
                 raise ValueError("understanding cases require audio_path")
@@ -388,6 +392,7 @@ def _case_payload(case: AudioEvaluationCase) -> dict[str, Any]:
     payload = asdict(case)
     payload["track"] = case.track.value
     payload["choices"] = list(case.choices)
+    payload["tags"] = list(case.tags)
     return payload
 
 

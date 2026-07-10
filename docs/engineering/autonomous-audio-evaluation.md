@@ -387,6 +387,9 @@ The manifest should record:
 - macOS version, SoC, memory, and device backend
 - dataset repository, revision, config, split, row IDs, row hashes, and licenses
 - prompts, sampling params, CFG settings, seeds, and stop conditions
+- case tags/control families for ablations such as quantity, distance,
+  temporal order, silence, prompt-injection/no-speech, and caption-source
+  cohorts
 - decoder, enhancer, oracle, and preprocessing versions
 - every attempt, retry, timing, and failure reason
 
@@ -422,8 +425,9 @@ Current implementation status:
 - `audex_mac/audio_evaluation.py` owns case contracts, deterministic seeds,
   constrained-answer scoring, append-only artifacts, summary verdicts, and
   credential rejection. Generation case manifests can carry deterministic
-  hard-foil captions for future caption-alignment metrics. Current summaries
-  report overall constrained-answer accuracy, invalid response rate,
+  hard-foil captions for future caption-alignment metrics, and cases can carry
+  stable tags/control families for future ablations. Current summaries report
+  overall constrained-answer accuracy, invalid response rate,
   per-category understanding accuracy,
   balanced accuracy, YES/NO false-positive and false-negative rates,
   deterministic bootstrap confidence intervals for accuracy, generation
@@ -462,6 +466,13 @@ Current implementation status:
   silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
   it also records a lightweight zero-crossing activity proxy for bandwidth
   sanity. It does not score caption alignment.
+- `audex_mac/audio_evaluation_clap.py` and
+  `audex_mac/audio_evaluation_clap_worker.py` define the isolated CLAP worker
+  request/command/result boundary for caption similarity, hard-foil win, and
+  hard-foil margin metrics. The request contract requires generated WAV paths,
+  requested captions, and distinct deterministic hard-foil captions. The worker
+  currently fails loud with `UNSCORED`; pinned CLAP embedding/scoring and
+  qualification remain future work.
 - `audex_mac/audio_evaluation_openl3.py` and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
   worker request/command/result boundary and fail loudly outside Python 3.11 or

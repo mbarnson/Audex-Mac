@@ -98,6 +98,11 @@ def build_mmau_cases(
                 expected_answer=expected,
                 audio_path=audio.path,
                 choices=choice_labels,
+                tags=_case_tags(
+                    "dataset:mmau",
+                    f"task:{category}",
+                    f"sub_category:{row.get('sub_category', '')}",
+                ),
             )
         )
     return tuple(cases)
@@ -145,6 +150,12 @@ def build_esc50_cases(
                 expected_answer=expected,
                 audio_path=audio.path,
                 choices=("YES", "NO"),
+                tags=_case_tags(
+                    "dataset:esc50",
+                    f"class:{category}",
+                    f"queried_class:{queried_category}",
+                    f"query:{'positive' if positive else 'hard_foil'}",
+                ),
             )
         )
     return tuple(cases)
@@ -186,6 +197,7 @@ def build_caption_cases(
                 category=category,
                 prompt=caption,
                 caption=caption,
+                tags=_case_tags("generation:caption", f"dataset:{dataset_id}"),
             )
         )
     return attach_caption_hard_foils(tuple(cases))
@@ -284,3 +296,22 @@ def _safe_id(value: str) -> str:
         character.lower() if character.isalnum() else "-" for character in value
     )
     return "-".join(part for part in safe.split("-") if part)
+
+
+def _case_tags(*raw_tags: str) -> tuple[str, ...]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in raw_tags:
+        key, separator, value = str(raw_tag).strip().partition(":")
+        if not key:
+            continue
+        tag = _safe_id(key)
+        if separator:
+            safe_value = _safe_id(value)
+            if not safe_value:
+                continue
+            tag = f"{tag}:{safe_value}"
+        if tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+    return tuple(tags)

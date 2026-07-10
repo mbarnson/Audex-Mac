@@ -26,6 +26,7 @@ from .audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
 )
+from .audio_evaluation_clap import CLAP_REPO_ID, CLAP_REVISION
 from .audio_evaluation_datasets import MaterializedAudio
 from .audio_evaluation_generation import TtaRecipe
 from .audio_evaluation_hf import (
@@ -357,9 +358,9 @@ def _oracle_registry_payload() -> dict[str, Any]:
             "semantic_caption_alignment": False,
         },
         "clap": {
-            "status": "planned",
-            "repo_id": "laion/clap-htsat-unfused",
-            "revision": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+            "status": "planned_worker_boundary",
+            "repo_id": CLAP_REPO_ID,
+            "revision": CLAP_REVISION,
             "purpose": "caption_alignment_and_retrieval_diagnostics",
             "qualification_gate": {
                 "calibration": "fixed ESC-50 hard-negative calibration",

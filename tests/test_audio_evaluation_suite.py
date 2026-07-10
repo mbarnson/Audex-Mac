@@ -245,6 +245,19 @@ def test_standard_suite_selects_regression_manifest_and_control_prompts() -> Non
     ]
     assert all(case.hard_foil_caption for case in generation_cases)
     assert all(case.hard_foil_caption != case.caption for case in generation_cases)
+    control_cases = [
+        case for case in cases if case.dataset_id == STANDARD_CONTROL_DATASET_ID
+    ]
+    assert {tag for case in control_cases for tag in case.tags} >= {
+        "control:quantity",
+        "control:distance",
+        "control:temporal",
+        "control:audio-quality",
+        "control:silence",
+        "control:prompt-injection",
+        "control:no-speech",
+        "generation:structured-control",
+    }
 
 
 @pytest.mark.fast

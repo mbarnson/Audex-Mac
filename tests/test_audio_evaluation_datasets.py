@@ -57,6 +57,7 @@ def test_mmau_rows_become_pinned_multiple_choice_audio_cases() -> None:
     assert "A. A dog" in case.prompt
     assert "Return only the single choice letter." in case.prompt
     assert case.audio_path == "/cache/mmau-1.wav"
+    assert case.tags == ("dataset:mmau", "task:sound", "sub-category:events")
     assert len(case.source_row_hash) == 64
 
 
@@ -113,6 +114,18 @@ def test_esc50_rows_become_balanced_entailment_probes_with_hard_foils() -> None:
     assert "Does this recording contain the sound of a dog?" in cases[1].prompt
     assert cases[0].category == "dog"
     assert cases[1].category == "rooster"
+    assert cases[0].tags == (
+        "dataset:esc50",
+        "class:dog",
+        "queried-class:dog",
+        "query:positive",
+    )
+    assert cases[1].tags == (
+        "dataset:esc50",
+        "class:rooster",
+        "queried-class:dog",
+        "query:hard-foil",
+    )
 
 
 @pytest.mark.fast
@@ -142,6 +155,7 @@ def test_caption_rows_are_pinned_without_reference_audio_in_the_prompt() -> None
     assert case.audio_path is None
     assert case.prompt == case.caption
     assert case.hard_foil_caption is None
+    assert case.tags == ("generation:caption", "dataset:opensound-audiocaps")
     assert "secret-source" not in case.prompt
     assert len(case.source_row_hash) == 64
 

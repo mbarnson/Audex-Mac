@@ -101,6 +101,22 @@ STANDARD_CONTROL_PROMPTS = (
     ("trap-03", "Make a kitchen timer beep repeatedly without any narration."),
     ("trap-04", "Produce crowd applause only, with no words or singing."),
 )
+STANDARD_CONTROL_TAGS = {
+    "quantity": ("control:quantity", "generation:structured-control"),
+    "distance": ("control:distance", "generation:structured-control"),
+    "temporal": ("control:temporal", "generation:structured-control"),
+    "quality": ("control:audio-quality", "generation:structured-control"),
+    "negative": (
+        "control:negative",
+        "control:silence",
+        "generation:structured-control",
+    ),
+    "trap": (
+        "control:prompt-injection",
+        "control:no-speech",
+        "generation:structured-control",
+    ),
+}
 
 
 def build_smoke_cases_from_rows(
@@ -362,6 +378,7 @@ def build_full_cases_from_rows(
 def _build_standard_control_cases() -> tuple[AudioEvaluationCase, ...]:
     cases: list[AudioEvaluationCase] = []
     for row_id, caption in STANDARD_CONTROL_PROMPTS:
+        control_family = row_id.split("-", 1)[0]
         row = {"id": row_id, "caption": caption}
         canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
         cases.append(
@@ -378,6 +395,7 @@ def _build_standard_control_cases() -> tuple[AudioEvaluationCase, ...]:
                 category="structured-control",
                 prompt=caption,
                 caption=caption,
+                tags=STANDARD_CONTROL_TAGS[control_family],
             )
         )
     return attach_caption_hard_foils(tuple(cases))
