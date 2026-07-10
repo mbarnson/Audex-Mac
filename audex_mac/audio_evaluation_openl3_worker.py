@@ -61,6 +61,15 @@ def run_worker(
             detail=str(request_path),
         )
         return 2
+    validation_error = _request_validation_error(request_path)
+    if validation_error is not None:
+        _write_result(
+            output_path,
+            status="PROTOCOL_FAIL",
+            reason="invalid_openl3_request",
+            detail=validation_error,
+        )
+        return 2
     _write_result(
         output_path,
         status="UNSCORED",
@@ -71,6 +80,42 @@ def run_worker(
         ),
     )
     return 2
+
+
+def _request_validation_error(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return str(exc)
+    if not isinstance(payload, dict):
+        return "request must be a JSON object"
+    if payload.get("schema_version") != 1:
+        return "schema_version must be 1"
+    requests = payload.get("requests")
+    if not isinstance(requests, list) or not requests:
+        return "requests must be a non-empty list"
+    for index, request in enumerate(requests):
+        if not isinstance(request, dict):
+            return f"request {index} must be an object"
+        for field in ("dataset", "content_type", "generated_dir"):
+            if not str(request.get(field, "")).strip():
+                return f"request {index} is missing {field}"
+        if request.get("content_type") not in {"env", "music"}:
+            return f"request {index} content_type must be env or music"
+        if request.get("embedding_size") != 512:
+            return f"request {index} embedding_size must be 512"
+        if request.get("input_repr") != "mel256":
+            return f"request {index} input_repr must be mel256"
+        try:
+            hop_seconds = float(request.get("hop_seconds"))
+        except (TypeError, ValueError):
+            return f"request {index} hop_seconds must be numeric"
+        if hop_seconds != 0.5:
+            return f"request {index} hop_seconds must be 0.5"
+        reference_dir = request.get("reference_dir")
+        if reference_dir is not None and not str(reference_dir).strip():
+            return f"request {index} reference_dir must be null or non-empty"
+    return None
 
 
 def _missing_modules(module_names: tuple[str, ...]) -> tuple[str, ...]:

@@ -515,7 +515,11 @@ Current implementation status:
   versions without recording credentials. Semantic generation metrics remain
   future work; use
   `--generation-oracles unqualified` to force the previous fail-closed
-  placeholder behavior.
+  placeholder behavior. Standard/Full materialization writes
+  `generation/openl3-request.json`; completed generation runs write
+  `generation/clap-request.json` using actual generated WAV paths. AST request
+  writing remains blocked on explicit AudioSet label-map fixtures so labels are
+  not inferred from captions implicitly.
 
 Relevant current repo contracts:
 

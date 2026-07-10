@@ -27,7 +27,12 @@ from .audio_evaluation_adapters import (
     AudexVllmUnderstandingAdapter,
 )
 from .audio_evaluation_ast import AST_REPO_ID, AST_REVISION
-from .audio_evaluation_clap import CLAP_REPO_ID, CLAP_REVISION
+from .audio_evaluation_clap import (
+    CLAP_REPO_ID,
+    CLAP_REVISION,
+    build_clap_case_requests,
+    write_clap_worker_request,
+)
 from .audio_evaluation_datasets import MaterializedAudio
 from .audio_evaluation_generation import TtaRecipe
 from .audio_evaluation_hf import (
@@ -35,6 +40,10 @@ from .audio_evaluation_hf import (
     HfAudioMaterializer,
     HfDatasetClient,
     fetch_verified_rows,
+)
+from .audio_evaluation_openl3 import (
+    default_full_openl3_requests,
+    write_openl3_worker_request,
 )
 from .audio_evaluation_oracles import SignalSanityOracleSuite
 from .audio_evaluation_runner import (
@@ -306,6 +315,7 @@ def main(
             ),
         },
     )
+    _write_planned_worker_requests(run, tier=args.tier)
     if args.materialize_only:
         print(f"Audio evaluation materialized: {run.run_dir}")
         print(f"Cases: {len(cases)}")
@@ -331,6 +341,7 @@ def main(
         ),
         oracles=active_oracle_suite_factory(),
     ).run(run, master_seed=args.master_seed)
+    _write_completed_generation_worker_requests(run)
     print(f"Audio evaluation run: {run.run_dir}")
     print(f"Cases: {len(cases)}")
     print(f"Summary: {run.summary_path}")
@@ -432,6 +443,57 @@ def _build_cases_from_rows(
             materialize_audio=materialize_audio,
         )
     raise ValueError(f"unsupported audio evaluation tier: {tier}")
+
+
+def _write_planned_worker_requests(run: AudioEvaluationRun, *, tier: str) -> None:
+    if tier not in {"standard", "full"}:
+        return
+    write_openl3_worker_request(
+        run.run_dir / "generation" / "openl3-request.json",
+        run_id=run.run_dir.name,
+        requests=default_full_openl3_requests(run.run_dir),
+    )
+
+
+def _write_completed_generation_worker_requests(run: AudioEvaluationRun) -> None:
+    generated_wavs = _generated_wav_by_case_id(run.run_dir)
+    if not generated_wavs:
+        return
+    cases = tuple(
+        case
+        for case in run.cases
+        if case.track is EvaluationTrack.GENERATION and case.case_id in generated_wavs
+    )
+    if not cases:
+        return
+    clap_requests = build_clap_case_requests(
+        cases,
+        generated_wav_by_case_id=generated_wavs,
+    )
+    if clap_requests:
+        write_clap_worker_request(
+            run.run_dir / "generation" / "clap-request.json",
+            run_id=run.run_dir.name,
+            requests=clap_requests,
+        )
+
+
+def _generated_wav_by_case_id(run_dir: Path) -> dict[str, str]:
+    path = run_dir / "generation" / "outputs.jsonl"
+    generated_wavs: dict[str, str] = {}
+    if not path.is_file():
+        return generated_wavs
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        case_id = str(payload.get("case_id", "")).strip()
+        enhanced_wav_path = str(payload.get("enhanced_wav_path") or "").strip()
+        raw_wav_path = str(payload.get("raw_wav_path") or "").strip()
+        wav_path = enhanced_wav_path or raw_wav_path
+        if case_id and wav_path:
+            generated_wavs[case_id] = wav_path
+    return generated_wavs
 
 
 def _environment_payload(

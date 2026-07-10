@@ -371,6 +371,7 @@ def test_audio_evaluation_cli_materializes_standard_manifest(
     )
     assert generation_cases.count("\n") == 152
     assert "audex-mac/ualm-inspired-controls" in generation_cases
+    assert (run_dir / "generation" / "openl3-request.json").is_file()
 
 
 @pytest.mark.parametrize("tier", ["standard", "full"])
@@ -447,6 +448,14 @@ def test_audio_evaluation_cli_materializes_full_manifest(
     assert (run_dir / "generation" / "cases.jsonl").read_text(encoding="utf-8").count(
         "\n"
     ) == 32
+    openl3_request = json.loads(
+        (run_dir / "generation" / "openl3-request.json").read_text(encoding="utf-8")
+    )
+    assert openl3_request["run_id"] == "full-test"
+    assert [request["dataset"] for request in openl3_request["requests"]] == [
+        "audiocaps",
+        "song-describer",
+    ]
 
 
 def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_oracles(
@@ -571,6 +580,17 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     with wave.open(str(enhanced_path), "rb") as enhanced:
         assert enhanced.getframerate() == 48_000
         assert enhanced.getnchannels() == 2
+    clap_request = json.loads(
+        (run_dir / "generation" / "clap-request.json").read_text(encoding="utf-8")
+    )
+    assert clap_request["run_id"] == "signal-test"
+    assert len(clap_request["requests"]) == 8
+    assert {request["generated_wav_path"] for request in clap_request["requests"]} == {
+        json.loads(line)["enhanced_wav_path"]
+        for line in (run_dir / "generation" / "outputs.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    }
 
 
 def test_audio_evaluation_cli_executes_from_materialized_case_run(
