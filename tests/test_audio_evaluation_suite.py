@@ -11,6 +11,7 @@ from audex_mac.audio_evaluation_suite import (
     MMAU_PIN,
     SONG_DESCRIBER_PIN,
     STANDARD_CONTROL_DATASET_ID,
+    build_full_cases_from_rows,
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
 )
@@ -231,3 +232,54 @@ def test_standard_suite_selects_regression_manifest_and_control_prompts() -> Non
     assert sum(case.dataset_id == STANDARD_CONTROL_DATASET_ID for case in cases) == 24
     assert sum(case.track is EvaluationTrack.UNDERSTANDING for case in cases) == 500
     assert sum(case.track is EvaluationTrack.GENERATION for case in cases) == 152
+
+
+@pytest.mark.fast
+def test_full_suite_uses_all_supplied_rows_and_control_prompts() -> None:
+    mmau_rows = tuple(
+        _mmau_row(f"{task}-{index}", task)
+        for task in ("sound", "music", "speech")
+        for index in range(3)
+    )
+    esc_rows = tuple(
+        _esc_row(f"{category}-{index}.wav", category)
+        for category in ("dog", "rain")
+        for index in range(2)
+    )
+    audiocaps_rows = tuple(
+        _caption_row(index, f"AudioCaps caption {index}") for index in range(5)
+    )
+    song_rows = tuple(
+        _song_row(index, f"SongDescriber caption {index}") for index in range(3)
+    )
+    materialized: list[str] = []
+
+    def materialize(row: dict[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        materialized.append(row_id)
+        return MaterializedAudio(
+            path=f"/cache/{row_id}.wav",
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    cases = build_full_cases_from_rows(
+        mmau_rows=mmau_rows,
+        esc50_rows=esc_rows,
+        audiocaps_rows=audiocaps_rows,
+        song_describer_rows=song_rows,
+        materialize_audio=materialize,
+    )
+
+    assert len(cases) == 42
+    assert len(materialized) == 10
+    assert not any(case.category == "speech" for case in cases)
+    assert sum(case.category == "sound" for case in cases) == 3
+    assert sum(case.category == "music" for case in cases) == 3
+    assert sum(case.dataset_id == "ashraq/esc50" for case in cases) == 4
+    assert sum(case.category == "audiocaps" for case in cases) == 5
+    assert sum(case.category == "song-describer" for case in cases) == 3
+    assert sum(case.dataset_id == STANDARD_CONTROL_DATASET_ID for case in cases) == 24
+    assert sum(case.track is EvaluationTrack.UNDERSTANDING for case in cases) == 10
+    assert sum(case.track is EvaluationTrack.GENERATION for case in cases) == 32

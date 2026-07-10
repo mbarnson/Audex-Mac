@@ -110,6 +110,14 @@ class AudioEvaluationRunner:
             if generation_cases
             else OracleQualification(qualified=True, oracle_results={}, failures=())
         )
+        if generation_cases:
+            run.record_oracle_qualification(
+                {
+                    "qualified": qualification.qualified,
+                    "oracle_results": dict(qualification.oracle_results),
+                    "failures": list(qualification.failures),
+                }
+            )
         protocol_failures = list(qualification.failures)
         for case in run.cases:
             seed = derive_case_seed(master_seed, case.case_id)

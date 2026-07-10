@@ -187,6 +187,9 @@ class AudioEvaluationRun:
         self.manifest_path = run_dir / "manifest.json"
         self.environment_path = run_dir / "environment.json"
         self.summary_path = run_dir / "summary.json"
+        self.oracle_qualification_path = (
+            run_dir / "generation" / "oracle_qualification.json"
+        )
         self._case_by_id = {case.case_id: case for case in cases}
         self._completed_case_ids: set[str] = set()
 
@@ -284,6 +287,13 @@ class AudioEvaluationRun:
             stream.write(
                 json.dumps({"case_id": case_id, **dict(payload)}, sort_keys=True) + "\n"
             )
+
+    def record_oracle_qualification(self, payload: Mapping[str, Any]) -> None:
+        _reject_credentials(payload)
+        self.oracle_qualification_path.write_text(
+            json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     def finalize(
         self,

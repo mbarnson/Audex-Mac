@@ -357,15 +357,17 @@ def test_audio_evaluation_cli_materializes_standard_manifest(
     assert "audex-mac/ualm-inspired-controls" in generation_cases
 
 
-def test_audio_evaluation_cli_blocks_standard_execution_until_semantic_oracles(
+@pytest.mark.parametrize("tier", ["standard", "full"])
+def test_audio_evaluation_cli_blocks_non_smoke_execution_until_semantic_oracles(
     tmp_path: Path,
+    tier: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit):
         audio_evaluation_cli.main(
             [
                 "--tier",
-                "standard",
+                tier,
                 "--run-root",
                 str(tmp_path / "runs"),
             ],
@@ -378,7 +380,57 @@ def test_audio_evaluation_cli_blocks_standard_execution_until_semantic_oracles(
             ),
         )
 
-    assert "semantic generation oracles" in capsys.readouterr().err
+    assert f"{tier} execution is blocked" in capsys.readouterr().err
+
+
+def test_audio_evaluation_cli_materializes_full_manifest(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _full_rows()
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "full",
+            "--materialize-only",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "full-test",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / "full-test"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["tier"] == "full"
+    assert manifest["case_count"] == 42
+    assert (run_dir / "understanding" / "cases.jsonl").read_text(
+        encoding="utf-8"
+    ).count("\n") == 10
+    assert (run_dir / "generation" / "cases.jsonl").read_text(encoding="utf-8").count(
+        "\n"
+    ) == 32
 
 
 def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_oracles(
@@ -704,6 +756,27 @@ def _standard_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
         ),
         "renumics/song-describer-dataset": tuple(
             _song_row(index, f"SongDescriber caption {index}") for index in range(70)
+        ),
+    }
+
+
+def _full_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
+    return {
+        "TwinkStart/MMAU": tuple(
+            _mmau_row(f"{task}-{index}", task)
+            for task in ("sound", "music", "speech")
+            for index in range(3)
+        ),
+        "ashraq/esc50": tuple(
+            _esc_row(f"{category}-{index}.wav", category)
+            for category in ("dog", "rain")
+            for index in range(2)
+        ),
+        "d0rj/audiocaps": tuple(
+            _caption_row(index, f"AudioCaps caption {index}") for index in range(5)
+        ),
+        "renumics/song-describer-dataset": tuple(
+            _song_row(index, f"SongDescriber caption {index}") for index in range(3)
         ),
     }
 

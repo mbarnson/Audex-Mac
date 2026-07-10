@@ -285,6 +285,71 @@ def build_standard_cases_from_rows(
     return tuple(cases)
 
 
+def build_full_cases_from_rows(
+    *,
+    mmau_rows: tuple[Mapping[str, Any], ...],
+    esc50_rows: tuple[Mapping[str, Any], ...],
+    audiocaps_rows: tuple[Mapping[str, Any], ...],
+    song_describer_rows: tuple[Mapping[str, Any], ...],
+    materialize_audio: Callable[[Mapping[str, Any]], MaterializedAudio],
+) -> tuple[AudioEvaluationCase, ...]:
+    """Build the full paper-style manifest from all supplied pinned rows."""
+
+    mmau_selected = tuple(
+        row
+        for row in mmau_rows
+        if str(row.get("task", "")).lower() in {"sound", "music"}
+    )
+    cases: list[AudioEvaluationCase] = []
+    cases.extend(
+        build_mmau_cases(
+            mmau_selected,
+            dataset_revision=MMAU_PIN.revision,
+            license=MMAU_PIN.license,
+            materialize_audio=materialize_audio,
+        )
+    )
+    if esc50_rows:
+        esc_foils = _placeholder_foil_by_category(esc50_rows)
+        cases.extend(
+            build_esc50_cases(
+                esc50_rows,
+                dataset_revision=ESC50_PIN.revision,
+                materialize_audio=materialize_audio,
+                foil_by_category=esc_foils,
+            )
+        )
+    cases.extend(
+        build_caption_cases(
+            audiocaps_rows,
+            dataset_id=AUDIOCAPS_CAPTION_PIN.repo_id,
+            dataset_revision=AUDIOCAPS_CAPTION_PIN.revision,
+            dataset_config=AUDIOCAPS_CAPTION_PIN.config,
+            dataset_split=AUDIOCAPS_CAPTION_PIN.split,
+            license=AUDIOCAPS_CAPTION_PIN.license,
+            id_field="audiocap_id",
+            caption_field="caption",
+            category="audiocaps",
+        )
+    )
+    if song_describer_rows:
+        cases.extend(
+            build_caption_cases(
+                song_describer_rows,
+                dataset_id=SONG_DESCRIBER_PIN.repo_id,
+                dataset_revision=SONG_DESCRIBER_PIN.revision,
+                dataset_config=SONG_DESCRIBER_PIN.config,
+                dataset_split=SONG_DESCRIBER_PIN.split,
+                license=SONG_DESCRIBER_PIN.license,
+                id_field="caption_id",
+                caption_field="caption",
+                category="song-describer",
+            )
+        )
+    cases.extend(_build_standard_control_cases())
+    return tuple(cases)
+
+
 def _build_standard_control_cases() -> tuple[AudioEvaluationCase, ...]:
     cases: list[AudioEvaluationCase] = []
     for row_id, caption in STANDARD_CONTROL_PROMPTS:

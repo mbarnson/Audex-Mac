@@ -162,6 +162,12 @@ def test_runner_executes_mixed_smoke_run_and_records_scores(tmp_path: Path) -> N
     )
     assert generation_metric["clap_score"] == 0.71
     assert generation_metric["hard_foil_won"] is True
+    qualification = json.loads(run.oracle_qualification_path.read_text())
+    assert qualification == {
+        "failures": [],
+        "oracle_results": {"clap": {"qualified": True}},
+        "qualified": True,
+    }
 
 
 @pytest.mark.fast
@@ -240,6 +246,12 @@ def test_unqualified_generation_oracle_fails_closed(tmp_path: Path) -> None:
         "case_id": "audiocaps-1",
         "reason": "oracle_not_qualified",
         "verdict": "UNSCORED",
+    }
+    qualification = json.loads(run.oracle_qualification_path.read_text())
+    assert qualification == {
+        "failures": ["generation_oracles_not_qualified"],
+        "oracle_results": {"status": "generation_oracles_not_qualified"},
+        "qualified": False,
     }
 
 

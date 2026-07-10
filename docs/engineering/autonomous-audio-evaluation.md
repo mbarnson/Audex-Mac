@@ -367,6 +367,7 @@ Recommended local layout:
     outputs.jsonl
   generation/
     cases.jsonl
+    oracle_qualification.json
     outputs.jsonl
     metrics.jsonl
   media/
@@ -427,10 +428,10 @@ Current implementation status:
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
 - `audex_mac/audio_evaluation_suite.py` defines the pinned smoke-suite
-  constants, the Standard-tier local regression manifest, local structured
-  control prompts, and deterministic pre-download selection. The current ESC-50
-  foil map is valid and deterministic, but still needs semantic hard-negative
-  refinement before standard/full claims.
+  constants, Standard-tier local regression manifest, Full-tier paper-style
+  manifest, local structured control prompts, and deterministic pre-download
+  selection. The current ESC-50 foil map is valid and deterministic, but still
+  needs semantic hard-negative refinement before standard/full claims.
 - `audex_mac/audio_evaluation_adapters.py` contains the Audex vLLM
   understanding adapter and a TTA adapter that builds CFG3 XCodec token streams.
 - `audex_mac/audio_evaluation_xcodec.py` resolves the external XCodec1 model
@@ -441,8 +442,8 @@ Current implementation status:
   `cpu`); forcing CPU is explicit. XCodec1 weights are not bundled with Audex;
   use a local snapshot of `hf-audio/xcodec-hubert-general-balanced`.
 - `audex_mac/audio_evaluation_runner.py` executes cases through those adapters,
-  records outputs/metrics, and treats structural, signal, oracle, and
-  infrastructure failures as protocol failures.
+  records oracle qualification, outputs, and metrics, and treats structural,
+  signal, oracle, and infrastructure failures as protocol failures.
 - `audex_mac/audio_evaluation_oracles.py` contains a smoke-tier signal sanity
   oracle with deterministic self-tests. It gates finite/nonempty duration,
   silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
@@ -451,8 +452,10 @@ Current implementation status:
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and
   `audex-mac eval-audio-capabilities --tier standard --materialize-only` for the
-  Standard manifest/cache. Standard execution is intentionally blocked until
-  semantic generation oracles exist. Without `--materialize-only`, smoke
+  Standard manifest/cache. `--tier full --materialize-only` prepares the
+  Full-tier manifest/cache from all supplied pinned rows. Standard and Full
+  execution are intentionally blocked until semantic generation oracles and
+  paper-style metrics exist. Without `--materialize-only`, smoke
   execution resolves the selected already-cached Audex speech checkpoint, or
   accepts an explicit `--model-path` override. It still requires `XCODEC1_PATH`
   or `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes

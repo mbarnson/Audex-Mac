@@ -45,6 +45,7 @@ from .audio_evaluation_suite import (
     ESC50_PIN,
     MMAU_PIN,
     SONG_DESCRIBER_PIN,
+    build_full_cases_from_rows,
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
 )
@@ -88,7 +89,7 @@ def main(
     parser = argparse.ArgumentParser(
         description="Prepare or run autonomous Audex audio-capability evaluation"
     )
-    parser.add_argument("--tier", choices=("smoke", "standard"), required=True)
+    parser.add_argument("--tier", choices=("smoke", "standard", "full"), required=True)
     parser.add_argument(
         "--materialize-only",
         action="store_true",
@@ -152,9 +153,9 @@ def main(
     args = parser.parse_args(argv)
     if args.materialize_only and args.cases_from_run is not None:
         parser.error("--cases-from-run is only valid for execution runs")
-    if args.tier == "standard" and not args.materialize_only:
+    if args.tier in {"standard", "full"} and not args.materialize_only:
         parser.error(
-            "standard execution is blocked until semantic generation oracles "
+            f"{args.tier} execution is blocked until semantic generation oracles "
             "are implemented; use --materialize-only to prepare the manifest"
         )
 
@@ -359,6 +360,14 @@ def _build_cases_from_rows(
             audiocaps_rows=audiocaps_rows,
             song_describer_rows=song_describer_rows,
             master_seed=master_seed,
+            materialize_audio=materialize_audio,
+        )
+    if tier == "full":
+        return build_full_cases_from_rows(
+            mmau_rows=mmau_rows,
+            esc50_rows=esc50_rows,
+            audiocaps_rows=audiocaps_rows,
+            song_describer_rows=song_describer_rows,
             materialize_audio=materialize_audio,
         )
     raise ValueError(f"unsupported audio evaluation tier: {tier}")
