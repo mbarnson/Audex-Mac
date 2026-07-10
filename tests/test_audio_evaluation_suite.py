@@ -240,6 +240,11 @@ def test_standard_suite_selects_regression_manifest_and_control_prompts() -> Non
     assert sum(case.dataset_id == STANDARD_CONTROL_DATASET_ID for case in cases) == 24
     assert sum(case.track is EvaluationTrack.UNDERSTANDING for case in cases) == 500
     assert sum(case.track is EvaluationTrack.GENERATION for case in cases) == 152
+    generation_cases = [
+        case for case in cases if case.track is EvaluationTrack.GENERATION
+    ]
+    assert all(case.hard_foil_caption for case in generation_cases)
+    assert all(case.hard_foil_caption != case.caption for case in generation_cases)
 
 
 @pytest.mark.fast
