@@ -370,6 +370,8 @@ Recommended local layout:
     oracle_qualification.json
     outputs.jsonl
     metrics.jsonl
+    openl3-request.json
+    openl3-result.json
   media/
     raw/
     enhanced/
@@ -458,6 +460,11 @@ Current implementation status:
   silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
   it also records a lightweight zero-crossing activity proxy for bandwidth
   sanity. It does not score caption alignment.
+- `audex_mac/audio_evaluation_openl3.py` and
+  `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
+  worker request/command/result boundary and fail loudly outside Python 3.11 or
+  without worker-only metric dependencies. FD_OpenL3 computation itself remains
+  future work.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and
