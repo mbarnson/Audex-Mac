@@ -17,6 +17,7 @@ from audex_mac.audio_evaluation import (
     EvaluationTrack,
 )
 from audex_mac.audio_evaluation_datasets import MaterializedAudio
+from audex_mac.audio_evaluation_esc50 import ESC50_HARD_NEGATIVES
 from audex_mac.audio_evaluation_hf import DatasetPin
 from audex_mac.vllm_runtime import VllmRequestResult
 
@@ -77,7 +78,7 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
         ),
         "ashraq/esc50": tuple(
             _esc_row(f"{category}-{index}.wav", category)
-            for category in ("dog", "rooster", "rain", "clock")
+            for category in ("dog", "rooster", "rain", "clock_tick")
             for index in range(4)
         ),
         "d0rj/audiocaps": tuple(
@@ -646,6 +647,7 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     )
     assert clap_request["run_id"] == "signal-test"
     assert len(clap_request["requests"]) == 8
+    assert len(clap_request["qualification_requests"]) == 8
     assert {request["generated_wav_path"] for request in clap_request["requests"]} == {
         json.loads(line)["enhanced_wav_path"]
         for line in (run_dir / "generation" / "outputs.jsonl")
@@ -997,7 +999,7 @@ def _smoke_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
         ),
         "ashraq/esc50": tuple(
             _esc_row(f"{category}-{index}.wav", category)
-            for category in ("dog", "rooster", "rain", "clock")
+            for category in ("dog", "rooster", "rain", "clock_tick")
             for index in range(4)
         ),
         "d0rj/audiocaps": tuple(
@@ -1017,8 +1019,8 @@ def _standard_rows() -> dict[str, tuple[Mapping[str, Any], ...]]:
             for index in range(130)
         ),
         "ashraq/esc50": tuple(
-            _esc_row(f"class-{category:02d}-{index}.wav", f"class-{category:02d}")
-            for category in range(50)
+            _esc_row(f"{category}-{index}.wav", category)
+            for category in ESC50_HARD_NEGATIVES
             for index in range(5)
         ),
         "d0rj/audiocaps": tuple(

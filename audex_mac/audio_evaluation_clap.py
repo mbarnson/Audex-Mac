@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack
+from .audio_evaluation_esc50 import ESC50_HARD_NEGATIVES
+
+ESC50_DATASET_ID = "ashraq/esc50"
 
 CLAP_WORKER_MODULE = "audex_mac.audio_evaluation_clap_worker"
 CLAP_REQUEST_SCHEMA = 1
@@ -40,6 +43,37 @@ class ClapCaseRequest:
             raise ValueError("CLAP hard foil caption must differ from caption")
 
 
+@dataclass(frozen=True, slots=True)
+class ClapQualificationRequest:
+    case_id: str
+    audio_path: str
+    expected_caption: str
+    hard_negative_captions: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("case_id", self.case_id),
+                ("audio_path", self.audio_path),
+                ("expected_caption", self.expected_caption),
+            )
+            if not str(value).strip()
+        ]
+        if missing:
+            raise ValueError(f"CLAP qualification request has empty fields: {missing}")
+        if len(self.hard_negative_captions) != 3:
+            raise ValueError("CLAP qualification requires exactly three hard negatives")
+        captions = (
+            self.expected_caption,
+            *self.hard_negative_captions,
+        )
+        if any(not caption.strip() for caption in captions):
+            raise ValueError("CLAP qualification captions must not be empty")
+        if len(set(captions)) != len(captions):
+            raise ValueError("CLAP qualification captions must be distinct")
+
+
 def build_clap_case_requests(
     cases: Iterable[AudioEvaluationCase],
     *,
@@ -69,11 +103,46 @@ def build_clap_case_requests(
     return tuple(requests)
 
 
+def build_clap_qualification_requests(
+    cases: Iterable[AudioEvaluationCase],
+) -> tuple[ClapQualificationRequest, ...]:
+    """Build fixed four-way CLAP calibration requests from pinned ESC-50 cases."""
+
+    requests: list[ClapQualificationRequest] = []
+    for case in cases:
+        if (
+            case.track is not EvaluationTrack.UNDERSTANDING
+            or case.dataset_id != ESC50_DATASET_ID
+        ):
+            continue
+        if not case.audio_path:
+            raise ValueError(f"ESC-50 case {case.case_id} has no audio path")
+        negatives = ESC50_HARD_NEGATIVES.get(case.category)
+        if negatives is None:
+            raise ValueError(f"ESC-50 case has unknown category: {case.category}")
+        requests.append(
+            ClapQualificationRequest(
+                case_id=case.case_id,
+                audio_path=case.audio_path,
+                expected_caption=_esc50_caption(case.category),
+                hard_negative_captions=tuple(
+                    _esc50_caption(category) for category in negatives
+                ),
+            )
+        )
+    return tuple(requests)
+
+
+def _esc50_caption(category: str) -> str:
+    return f"The sound of {category.replace('_', ' ')}."
+
+
 def write_clap_worker_request(
     path: Path,
     *,
     run_id: str,
     requests: Iterable[ClapCaseRequest],
+    qualification_requests: Iterable[ClapQualificationRequest] = (),
     model_repo_id: str = CLAP_REPO_ID,
     model_revision: str = CLAP_REVISION,
 ) -> None:
@@ -85,6 +154,9 @@ def write_clap_worker_request(
             "revision": model_revision,
         },
         "requests": [asdict(request) for request in requests],
+        "qualification_requests": [
+            asdict(request) for request in qualification_requests
+        ],
         "metrics": {
             "caption_similarity": True,
             "hard_foil_win": True,

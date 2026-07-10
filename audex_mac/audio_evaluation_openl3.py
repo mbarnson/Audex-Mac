@@ -24,8 +24,14 @@ STABLE_AUDIO_METRICS_SOURCE_SHA256 = (
 AUDIOCAPS_REFERENCE_STATS_FILENAME = (
     "audiocaps-test__channels2__44100__openl3env__openl3hopsize0.5__batch4.npz"
 )
+AUDIOCAPS_REFERENCE_STATS_SHA256 = (
+    "3c420a01dd417cfb494202a3e280ebd38fe467a9eebe71a562db7ccba4d93707"
+)
 SONG_DESCRIBER_REFERENCE_STATS_FILENAME = (
     "song_describer__channels2__44100__openl3music__openl3hopsize0.5__batch4.npz"
+)
+SONG_DESCRIBER_REFERENCE_STATS_SHA256 = (
+    "94fde8992200ce1c4d5ede5b98573e800a1da8a6aa967eba13b43b2c2b5be5e6"
 )
 
 
@@ -35,6 +41,7 @@ class OpenL3DatasetRequest:
     content_type: str
     generated_dir: str
     reference_statistics_path: str
+    reference_statistics_sha256: str
     expected_file_count: int
     embedding_size: int = OPENL3_EMBEDDING_SIZE
     input_repr: str = OPENL3_INPUT_REPR
@@ -60,6 +67,8 @@ class OpenL3DatasetRequest:
             raise ValueError("Audex OpenL3 parity requires batch size 4")
         if not self.reference_statistics_path.strip():
             raise ValueError("OpenL3 request requires reference statistics")
+        if len(self.reference_statistics_sha256) != 64:
+            raise ValueError("OpenL3 reference statistics require a SHA-256")
         if self.expected_file_count <= 0:
             raise ValueError("OpenL3 expected_file_count must be positive")
 
@@ -80,6 +89,7 @@ def default_full_openl3_requests(
             reference_statistics_path=str(
                 reference_stats_root / AUDIOCAPS_REFERENCE_STATS_FILENAME
             ),
+            reference_statistics_sha256=AUDIOCAPS_REFERENCE_STATS_SHA256,
             expected_file_count=4_875,
         ),
         OpenL3DatasetRequest(
@@ -89,6 +99,7 @@ def default_full_openl3_requests(
             reference_statistics_path=str(
                 reference_stats_root / SONG_DESCRIBER_REFERENCE_STATS_FILENAME
             ),
+            reference_statistics_sha256=SONG_DESCRIBER_REFERENCE_STATS_SHA256,
             expected_file_count=746,
         ),
     )

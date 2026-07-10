@@ -6,6 +6,10 @@ import pytest
 
 from audex_mac.audio_evaluation import EvaluationTrack
 from audex_mac.audio_evaluation_datasets import MaterializedAudio
+from audex_mac.audio_evaluation_esc50 import (
+    ESC50_HARD_NEGATIVES,
+    esc50_hard_foil_map,
+)
 from audex_mac.audio_evaluation_suite import (
     AUDIOCAPS_AUDIO_PIN,
     AUDIOCAPS_CAPTION_PIN,
@@ -67,6 +71,18 @@ def test_suite_records_audiocaps_audio_mirror_pin_for_reference_metrics() -> Non
 
 
 @pytest.mark.fast
+def test_esc50_foils_are_fixed_within_domain_hard_negatives() -> None:
+    assert len(ESC50_HARD_NEGATIVES) == 50
+    assert ESC50_HARD_NEGATIVES["dog"] == ("rooster", "pig", "cow")
+    assert ESC50_HARD_NEGATIVES["clock_tick"] == (
+        "glass_breaking",
+        "door_wood_knock",
+        "mouse_click",
+    )
+    assert esc50_hard_foil_map((_esc_row("dog.wav", "dog"),)) == {"dog": "rooster"}
+
+
+@pytest.mark.fast
 def test_smoke_suite_selects_pinned_cases_before_materializing_audio() -> None:
     mmau_rows = tuple(
         _mmau_row(f"{task}-{index}", task)
@@ -75,7 +91,7 @@ def test_smoke_suite_selects_pinned_cases_before_materializing_audio() -> None:
     )
     esc_rows = tuple(
         _esc_row(f"{category}-{index}.wav", category)
-        for category in ("dog", "rooster", "rain", "clock")
+        for category in ("dog", "rooster", "rain", "clock_tick")
         for index in range(4)
     )
     audiocaps_rows = tuple(
@@ -133,7 +149,7 @@ def test_smoke_suite_keeps_song_describer_optional_when_rows_are_absent() -> Non
     )
     esc_rows = tuple(
         _esc_row(f"{category}-{index}.wav", category)
-        for category in ("dog", "rooster", "rain", "clock")
+        for category in ("dog", "rooster", "rain", "clock_tick")
         for index in range(4)
     )
     audiocaps_rows = tuple(
@@ -192,7 +208,7 @@ def test_smoke_suite_allows_explicitly_empty_esc50_rows() -> None:
 
 @pytest.mark.fast
 def test_standard_suite_selects_regression_manifest_and_control_prompts() -> None:
-    categories = tuple(f"class-{index:02d}" for index in range(50))
+    categories = tuple(ESC50_HARD_NEGATIVES)
     mmau_rows = tuple(
         _mmau_row(f"{task}-{index}", task)
         for task in ("sound", "music")

@@ -10,7 +10,9 @@ from audex_mac.audio_evaluation import AudioEvaluationCase, EvaluationTrack
 from audex_mac.audio_evaluation_clap import (
     CLAP_REVISION,
     ClapCaseRequest,
+    ClapQualificationRequest,
     build_clap_case_requests,
+    build_clap_qualification_requests,
     build_clap_worker_command,
     load_clap_worker_result,
     write_clap_worker_request,
@@ -44,6 +46,25 @@ def _generation_case(
     )
 
 
+def _esc50_case(*, category: str = "dog") -> AudioEvaluationCase:
+    return AudioEvaluationCase(
+        case_id=f"esc50-{category}",
+        track=EvaluationTrack.UNDERSTANDING,
+        dataset_id="ashraq/esc50",
+        dataset_revision="rev1",
+        dataset_config="default",
+        dataset_split="train",
+        source_row_id=f"{category}.wav",
+        source_row_hash=f"hash-{category}",
+        license="CC-BY-NC-3.0",
+        category=category,
+        prompt="Return YES or NO.",
+        expected_answer="YES",
+        audio_path=f"/cache/{category}.wav",
+        choices=("YES", "NO"),
+    )
+
+
 def test_clap_worker_request_records_caption_and_hard_foil_contract(
     tmp_path: Path,
 ) -> None:
@@ -71,6 +92,7 @@ def test_clap_worker_request_records_caption_and_hard_foil_contract(
             "repo_id": "laion/clap-htsat-unfused",
             "revision": CLAP_REVISION,
         },
+        "qualification_requests": [],
         "requests": [
             {
                 "caption": "A dog barks twice.",
@@ -99,6 +121,48 @@ def test_clap_request_rejects_missing_or_self_foil(tmp_path: Path) -> None:
             caption="A dog barks.",
             hard_foil_caption="A dog barks.",
         )
+
+
+def test_clap_qualification_request_requires_distinct_hard_negatives(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="exactly three"):
+        ClapQualificationRequest(
+            case_id="dog",
+            audio_path=str(tmp_path / "dog.wav"),
+            expected_caption="A dog barks.",
+            hard_negative_captions=("Rain falls.", "A piano plays."),
+        )
+    with pytest.raises(ValueError, match="distinct"):
+        ClapQualificationRequest(
+            case_id="dog",
+            audio_path=str(tmp_path / "dog.wav"),
+            expected_caption="A dog barks.",
+            hard_negative_captions=(
+                "A dog barks.",
+                "Rain falls.",
+                "A piano plays.",
+            ),
+        )
+
+
+def test_clap_qualification_requests_use_fixed_esc50_hard_negatives() -> None:
+    requests = build_clap_qualification_requests(
+        (_esc50_case(category="dog"), _generation_case())
+    )
+
+    assert requests == (
+        ClapQualificationRequest(
+            case_id="esc50-dog",
+            audio_path="/cache/dog.wav",
+            expected_caption="The sound of dog.",
+            hard_negative_captions=(
+                "The sound of rooster.",
+                "The sound of pig.",
+                "The sound of cow.",
+            ),
+        ),
+    )
 
 
 def test_clap_request_rejects_missing_generated_wav_mapping(tmp_path: Path) -> None:
@@ -300,6 +364,10 @@ def test_clap_worker_scores_alignment_foils_and_retrieval(
     assert payload["qualification"] == {
         "qualified": False,
         "status": "NOT_RUN",
+        "thresholds": {
+            "min_4way_hard_negative_top1": 0.7,
+            "min_matched_over_foil": 0.85,
+        },
     }
     assert payload["model"] == {
         "repo_id": "laion/clap-htsat-unfused",
@@ -335,6 +403,96 @@ def test_clap_worker_scores_alignment_foils_and_retrieval(
         "model_load_seconds": 0.25,
         "preprocessing_seconds": 0.4,
     }
+
+
+def test_clap_worker_qualifies_with_fixed_hard_negative_calibration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    output_path = tmp_path / "result.json"
+    generated_wav = tmp_path / "generated.wav"
+    dog_wav = tmp_path / "dog.wav"
+    rain_wav = tmp_path / "rain.wav"
+    generated_wav.write_bytes(b"RIFF generated")
+    dog_wav.write_bytes(b"RIFF dog")
+    rain_wav.write_bytes(b"RIFF rain")
+    write_clap_worker_request(
+        request_path,
+        run_id="qualified-run",
+        requests=(
+            ClapCaseRequest(
+                case_id="generated",
+                generated_wav_path=str(generated_wav),
+                caption="A dog barks.",
+                hard_foil_caption="A bell rings.",
+            ),
+        ),
+        qualification_requests=(
+            ClapQualificationRequest(
+                case_id="dog-calibration",
+                audio_path=str(dog_wav),
+                expected_caption="A dog barks.",
+                hard_negative_captions=(
+                    "A bell rings.",
+                    "Rain falls.",
+                    "A piano plays.",
+                ),
+            ),
+            ClapQualificationRequest(
+                case_id="rain-calibration",
+                audio_path=str(rain_wav),
+                expected_caption="Rain falls.",
+                hard_negative_captions=(
+                    "A piano plays.",
+                    "A dog barks.",
+                    "A bell rings.",
+                ),
+            ),
+        ),
+    )
+
+    class FakeBackend:
+        model_load_seconds = 0.25
+
+        def embed_text(self, texts: list[str]) -> tuple[Any, float, float]:
+            vectors = {
+                "A dog barks.": [1.0, 0.0, 0.0],
+                "Rain falls.": [0.0, 1.0, 0.0],
+                "A bell rings.": [0.0, 0.0, 1.0],
+                "A piano plays.": [0.0, 0.0, -1.0],
+                "A train passes.": [-1.0, 0.0, 0.0],
+            }
+            return ([vectors[text] for text in texts], 0.10, 0.20)
+
+        def embed_audio(self, paths: list[Path]) -> tuple[Any, float, float]:
+            vectors = {
+                generated_wav: [1.0, 0.0, 0.0],
+                dog_wav: [1.0, 0.0, 0.0],
+                rain_wav: [0.0, 1.0, 0.0],
+            }
+            return ([vectors[path] for path in paths], 0.30, 0.40)
+
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_clap_worker._missing_modules",
+        lambda _names: (),
+    )
+
+    exit_code = run_worker(
+        request_path=request_path,
+        output_path=output_path,
+        device="mps",
+        backend_factory=lambda **_kwargs: FakeBackend(),
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert "reason" not in payload
+    assert payload["qualification"]["qualified"] is True
+    assert payload["qualification"]["four_way_hard_negative_top1"] == 1.0
+    assert payload["qualification"]["matched_over_foil"] == 1.0
+    assert payload["metrics"]["hard_foil_win_rate"] == 1.0
 
 
 def test_clap_backend_requires_the_explicit_accelerator() -> None:

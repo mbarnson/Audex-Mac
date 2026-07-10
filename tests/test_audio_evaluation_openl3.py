@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from audex_mac.audio_evaluation_openl3 import (
+    AUDIOCAPS_REFERENCE_STATS_SHA256,
     OPENL3_REQUEST_SCHEMA,
+    SONG_DESCRIBER_REFERENCE_STATS_SHA256,
     STABLE_AUDIO_METRICS_REPO,
     STABLE_AUDIO_METRICS_REVISION,
     STABLE_AUDIO_METRICS_SOURCE_SHA256,
@@ -65,6 +67,7 @@ def test_openl3_worker_request_contract_matches_full_tier_parameters(
                     / "reference-stats"
                     / "audiocaps-test__channels2__44100__openl3env__openl3hopsize0.5__batch4.npz"
                 ),
+                "reference_statistics_sha256": AUDIOCAPS_REFERENCE_STATS_SHA256,
                 "sample_rate": 44100,
             },
             {
@@ -84,6 +87,7 @@ def test_openl3_worker_request_contract_matches_full_tier_parameters(
                     / "reference-stats"
                     / "song_describer__channels2__44100__openl3music__openl3hopsize0.5__batch4.npz"
                 ),
+                "reference_statistics_sha256": SONG_DESCRIBER_REFERENCE_STATS_SHA256,
                 "sample_rate": 44100,
             },
         ],
@@ -97,6 +101,7 @@ def test_openl3_request_rejects_non_paper_parameters(tmp_path: Path) -> None:
             content_type="speech",
             generated_dir=str(tmp_path),
             reference_statistics_path=str(tmp_path / "reference.npz"),
+            reference_statistics_sha256="0" * 64,
             expected_file_count=1,
         )
     with pytest.raises(ValueError, match="512"):
@@ -105,6 +110,7 @@ def test_openl3_request_rejects_non_paper_parameters(tmp_path: Path) -> None:
             content_type="env",
             generated_dir=str(tmp_path),
             reference_statistics_path=str(tmp_path / "reference.npz"),
+            reference_statistics_sha256="0" * 64,
             expected_file_count=1,
             embedding_size=6144,
         )
@@ -214,6 +220,7 @@ def test_openl3_worker_rejects_invalid_request_schema(
                         "input_repr": "mel256",
                         "hop_seconds": 0.5,
                         "reference_statistics_path": str(tmp_path / "reference.npz"),
+                        "reference_statistics_sha256": "0" * 64,
                         "sample_rate": 44100,
                     }
                 ],
@@ -273,6 +280,9 @@ def test_openl3_worker_qualifies_and_scores_pinned_metric(
                         "hop_seconds": 0.5,
                         "input_repr": "mel256",
                         "reference_statistics_path": str(reference_stats),
+                        "reference_statistics_sha256": hashlib.sha256(
+                            b"NPZ fixture"
+                        ).hexdigest(),
                         "sample_rate": 44100,
                     }
                 ],

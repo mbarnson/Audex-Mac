@@ -15,6 +15,7 @@ from .audio_evaluation_datasets import (
     build_esc50_cases,
     build_mmau_cases,
 )
+from .audio_evaluation_esc50 import esc50_hard_foil_map
 from .audio_evaluation_hf import DatasetPin, select_stratified_rows
 
 MMAU_PIN = DatasetPin(
@@ -175,7 +176,7 @@ def build_smoke_cases_from_rows(
         )
     )
     if esc_selected:
-        esc_foils = _placeholder_foil_by_category(esc50_rows)
+        esc_foils = esc50_hard_foil_map(esc50_rows)
         cases.extend(
             build_esc50_cases(
                 esc_selected,
@@ -270,7 +271,7 @@ def build_standard_cases_from_rows(
         )
     )
     if esc_selected:
-        esc_foils = _placeholder_foil_by_category(esc50_rows)
+        esc_foils = esc50_hard_foil_map(esc50_rows)
         cases.extend(
             build_esc50_cases(
                 esc_selected,
@@ -335,7 +336,7 @@ def build_full_cases_from_rows(
         )
     )
     if esc50_rows:
-        esc_foils = _placeholder_foil_by_category(esc50_rows)
+        esc_foils = esc50_hard_foil_map(esc50_rows)
         cases.extend(
             build_esc50_cases(
                 esc50_rows,
@@ -417,23 +418,3 @@ def _select_rows(
         row_id=row_id,
         stratum=lambda _row: "all",
     )
-
-
-def _placeholder_foil_by_category(
-    rows: tuple[Mapping[str, Any], ...],
-) -> dict[str, str]:
-    """Return a deterministic smoke foil map; standard/full need semantic foils."""
-
-    categories = sorted(
-        {
-            str(row.get("category", "")).strip().lower()
-            for row in rows
-            if str(row.get("category", "")).strip()
-        }
-    )
-    if len(categories) < 2:
-        raise ValueError("ESC-50 foil mapping requires at least two categories")
-    return {
-        category: categories[(index + 1) % len(categories)]
-        for index, category in enumerate(categories)
-    }

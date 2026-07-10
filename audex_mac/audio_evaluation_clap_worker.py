@@ -11,6 +11,9 @@ from typing import Any
 
 from .audio_evaluation_clap import CLAP_REPO_ID, CLAP_REVISION
 
+CLAP_MIN_4WAY_HARD_NEGATIVE_TOP1 = 0.70
+CLAP_MIN_MATCHED_OVER_FOIL = 0.85
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audex CLAP metric worker")
@@ -75,6 +78,7 @@ def run_worker(
             device=device,
         )
         result = _evaluate(payload, backend=backend)
+        qualification = _qualify(payload, backend=backend)
     except Exception as exc:
         _write_result(
             output_path,
@@ -87,12 +91,13 @@ def run_worker(
         output_path,
         {
             "schema_version": 1,
-            "status": "UNSCORED",
-            "reason": "clap_oracle_not_qualified",
-            "qualification": {
-                "qualified": False,
-                "status": "NOT_RUN",
-            },
+            "status": "PASS" if qualification["qualified"] else "UNSCORED",
+            **(
+                {}
+                if qualification["qualified"]
+                else {"reason": "clap_oracle_not_qualified"}
+            ),
+            "qualification": qualification,
             "model": {
                 "repo_id": CLAP_REPO_ID,
                 "revision": CLAP_REVISION,
@@ -101,7 +106,7 @@ def run_worker(
             **result,
         },
     )
-    return 2
+    return 0 if qualification["qualified"] else 2
 
 
 def _evaluate(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
@@ -160,6 +165,110 @@ def _evaluate(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
             ),
             "inference_seconds": round(float(text_inference + audio_inference), 9),
         },
+    }
+
+
+def _qualify(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
+    requests = list(payload.get("qualification_requests", ()))
+    if not requests:
+        return {
+            "qualified": False,
+            "status": "NOT_RUN",
+            "thresholds": _qualification_thresholds(),
+        }
+    audio_paths = [Path(str(request["audio_path"])) for request in requests]
+    missing_paths = [str(path) for path in audio_paths if not path.is_file()]
+    if missing_paths:
+        raise FileNotFoundError(
+            f"CLAP qualification audio paths do not exist: {', '.join(missing_paths)}"
+        )
+    text_inputs: list[str] = []
+    text_offsets: list[tuple[int, int]] = []
+    for request in requests:
+        captions = [
+            str(request["expected_caption"]),
+            *(str(caption) for caption in request["hard_negative_captions"]),
+        ]
+        start = len(text_inputs)
+        text_inputs.extend(captions)
+        text_offsets.append((start, start + len(captions)))
+    text_vectors, text_preprocess, text_inference = backend.embed_text(text_inputs)
+    audio_vectors, audio_preprocess, audio_inference = backend.embed_audio(audio_paths)
+    normalized_text = _normalized_matrix(text_vectors, expected_rows=len(text_inputs))
+    normalized_audio = _normalized_matrix(audio_vectors, expected_rows=len(audio_paths))
+    if len(normalized_text[0]) != len(normalized_audio[0]):
+        raise ValueError("CLAP qualification text/audio embedding dimensions differ")
+
+    top1_hits: list[float] = []
+    matched_over_foil: list[float] = []
+    per_case: list[dict[str, Any]] = []
+    for index, request in enumerate(requests):
+        start, stop = text_offsets[index]
+        similarities = normalized_text[start:stop] @ normalized_audio[index]
+        expected_score = float(similarities[0])
+        foil_scores = [float(score) for score in similarities[1:]]
+        top1_hits.append(1.0 if int(similarities.argmax()) == 0 else 0.0)
+        case_foil_wins = [
+            1.0 if expected_score > foil_score else 0.0 for foil_score in foil_scores
+        ]
+        matched_over_foil.extend(case_foil_wins)
+        captions = [
+            str(request["expected_caption"]),
+            *(str(caption) for caption in request["hard_negative_captions"]),
+        ]
+        ranked = sorted(
+            (
+                {
+                    "caption": caption,
+                    "similarity": float(similarities[caption_index]),
+                }
+                for caption_index, caption in enumerate(captions)
+            ),
+            key=lambda item: (-float(item["similarity"]), str(item["caption"])),
+        )
+        per_case.append(
+            {
+                "case_id": str(request["case_id"]),
+                "expected_caption_similarity": expected_score,
+                "hard_negative_similarities": {
+                    caption: foil_score
+                    for caption, foil_score in zip(
+                        captions[1:], foil_scores, strict=True
+                    )
+                },
+                "four_way_top1": bool(top1_hits[-1]),
+                "matched_over_foil_rate": _mean(case_foil_wins),
+                "ranked_captions": ranked,
+            }
+        )
+    top1_rate = _mean(top1_hits)
+    matched_rate = _mean(matched_over_foil)
+    qualified = (
+        top1_rate >= CLAP_MIN_4WAY_HARD_NEGATIVE_TOP1
+        and matched_rate >= CLAP_MIN_MATCHED_OVER_FOIL
+    )
+    return {
+        "qualified": qualified,
+        "status": "PASS" if qualified else "FAIL",
+        "case_count": len(requests),
+        "four_way_hard_negative_top1": top1_rate,
+        "matched_over_foil": matched_rate,
+        "thresholds": _qualification_thresholds(),
+        "per_case": per_case,
+        "timings": {
+            "preprocessing_seconds": round(
+                float(text_preprocess + audio_preprocess),
+                9,
+            ),
+            "inference_seconds": round(float(text_inference + audio_inference), 9),
+        },
+    }
+
+
+def _qualification_thresholds() -> dict[str, float]:
+    return {
+        "min_4way_hard_negative_top1": CLAP_MIN_4WAY_HARD_NEGATIVE_TOP1,
+        "min_matched_over_foil": CLAP_MIN_MATCHED_OVER_FOIL,
     }
 
 
@@ -252,6 +361,30 @@ def _request_validation_error(path: Path) -> str | None:
                 return f"request {index} is missing {field}"
         if caption == hard_foil:
             return f"request {index} hard_foil_caption must differ from caption"
+    qualification_requests = payload.get("qualification_requests", [])
+    if not isinstance(qualification_requests, list):
+        return "qualification_requests must be a list"
+    for index, request in enumerate(qualification_requests):
+        if not isinstance(request, dict):
+            return f"qualification request {index} must be an object"
+        expected_caption = str(request.get("expected_caption", "")).strip()
+        hard_negatives = request.get("hard_negative_captions")
+        for field in ("case_id", "audio_path", "expected_caption"):
+            if not str(request.get(field, "")).strip():
+                return f"qualification request {index} is missing {field}"
+        if not isinstance(hard_negatives, list) or len(hard_negatives) != 3:
+            return (
+                f"qualification request {index} hard_negative_captions "
+                "must contain exactly three captions"
+            )
+        captions = [
+            expected_caption,
+            *(str(caption).strip() for caption in hard_negatives),
+        ]
+        if any(not caption for caption in captions):
+            return f"qualification request {index} captions must not be empty"
+        if len(set(captions)) != len(captions):
+            return f"qualification request {index} captions must be distinct"
     return None
 
 

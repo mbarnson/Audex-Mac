@@ -37,6 +37,7 @@ from .audio_evaluation_clap import (
     CLAP_REPO_ID,
     CLAP_REVISION,
     build_clap_case_requests,
+    build_clap_qualification_requests,
     write_clap_worker_request,
 )
 from .audio_evaluation_datasets import MaterializedAudio
@@ -555,6 +556,7 @@ def _write_completed_generation_worker_requests(run: AudioEvaluationRun) -> None
             run.run_dir / "generation" / "clap-request.json",
             run_id=run.run_dir.name,
             requests=clap_requests,
+            qualification_requests=build_clap_qualification_requests(run.cases),
         )
     expected_labels, forbidden_labels = explicit_ast_label_maps(cases)
     labeled_cases = tuple(case for case in cases if case.case_id in expected_labels)

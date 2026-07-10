@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import sys
@@ -184,6 +185,7 @@ def _request_validation_error(path: Path) -> str | None:
             "content_type",
             "generated_dir",
             "reference_statistics_path",
+            "reference_statistics_sha256",
         ):
             if not str(request.get(field, "")).strip():
                 return f"request {index} is missing {field}"
@@ -215,6 +217,13 @@ def _runtime_input_error(payload: Mapping[str, Any]) -> str | None:
             return f"{dataset} generated_dir does not exist: {generated_dir}"
         if not reference_stats.is_file():
             return f"{dataset} reference statistics do not exist: {reference_stats}"
+        actual_sha256 = hashlib.sha256(reference_stats.read_bytes()).hexdigest()
+        expected_sha256 = str(request["reference_statistics_sha256"])
+        if actual_sha256 != expected_sha256:
+            return (
+                f"{dataset} reference statistics SHA-256 mismatch: "
+                f"expected {expected_sha256}, got {actual_sha256}"
+            )
         wav_count = sum(1 for _path in generated_dir.glob("*.wav"))
         expected_count = int(request["expected_file_count"])
         if wav_count != expected_count:

@@ -159,7 +159,8 @@ authoritative.
 Qualification gates:
 
 - CLAP: fixed ESC-50 calibration, at least 70 percent 4-way hard-negative top-1,
-  at least 85 percent matched-over-foil, pinned weights and preprocessing.
+  at least 85 percent matched-over-negative comparisons, pinned weights and
+  preprocessing.
 - OpenL3 FD: identical sets score near zero, permutations preserve FD, unrelated
   or noise corpora score materially worse, fixed vectors reproduce within
   tolerance.
@@ -300,7 +301,8 @@ Full FD_OpenL3 parameters:
   `03cbfa6c524ad5af992c390f23c5384dfda242de09931f9a7162132fa7095f21`.
 - Stereo channel handling, 44.1 kHz metric bandwidth, and batch size 4.
 - Pinned precomputed reference-statistics NPZ for the matching dataset and
-  exact metric parameters.
+  exact metric parameters, including the expected SHA-256 of each statistics
+  file.
 - Metric input: ten-second generated clips, peak normalized to -1 dB, resampled
   and channel-handled by the pinned metric implementation.
 - AudioCaps file naming: generated files named by `audiocap_id`; the full test
@@ -464,8 +466,9 @@ Current implementation status:
   constants, Standard-tier local regression manifest, Full-tier paper-style
   manifest, the metadata-only AudioCaps audio mirror pin for future reference
   metrics, local structured control prompts, and deterministic pre-download
-  selection. The current ESC-50 foil map is valid and deterministic, but still
-  needs semantic hard-negative refinement before standard/full claims.
+  selection. ESC-50 probes and CLAP calibration use a fixed 50-class map whose
+  three negatives stay within the dataset's broad acoustic domain instead of
+  using arbitrary lexicographic neighbors.
 - `audex_mac/audio_evaluation_adapters.py` contains the Audex vLLM
   understanding adapter and a TTA adapter that builds CFG3 XCodec token streams,
   writes raw 16 kHz mono WAVs, and creates deterministic 48 kHz stereo
@@ -498,10 +501,13 @@ Current implementation status:
   captions. The worker loads the pinned LAION CLAP checkpoint through
   Transformers, requires an explicit available device (`cpu`, `mps`, or
   `cuda`), computes per-case metrics, and records model/preprocess/inference
-  timing. Until the fixed ESC-50 qualification gate exists, successful worker
-  computations deliberately return `UNSCORED` with the diagnostic metrics
-  attached; they are not capability evidence. CLAP oracle qualification and
-  calibrated capability thresholds remain future work.
+  timing. The worker also supports an explicit calibration block with fixed
+  audio, expected captions, and exactly three hard-negative captions; it returns
+  `PASS` only when the calibration clears the documented 70 percent 4-way
+  hard-negative top-1 and 85 percent matched-over-negative comparison
+  thresholds. Ordinary
+  generation-only requests still return `UNSCORED` with diagnostic metrics
+  attached because they are not capability evidence.
 - `audex_mac/audio_evaluation_ast.py`,
   `audex_mac/audio_evaluation_ast_backend.py`, and
   `audex_mac/audio_evaluation_ast_worker.py` define the isolated AST worker
@@ -522,10 +528,11 @@ Current implementation status:
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
   worker request/command/result boundary. The version-2 request pins the exact
   Stability source hash, stereo/44.1-kHz/batch-4 transform, dataset-specific
-  generated directory, exact corpus size, and precomputed reference statistics.
-  The worker fails loudly outside Python 3.11, rejects mixed or incomplete
-  corpora, self-qualifies identical/permuted/unrelated/fixed-vector FD behavior,
-  and delegates extraction and scoring to the pinned official source file.
+  generated directory, exact corpus size, and precomputed reference-statistics
+  file names and SHA-256 values. The worker fails loudly outside Python 3.11,
+  rejects mixed, incomplete, or hash-mismatched corpora, self-qualifies
+  identical/permuted/unrelated/fixed-vector FD behavior, and delegates
+  extraction and scoring to the pinned official source file.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and
@@ -600,7 +607,10 @@ Keep evaluator dependencies out of the conversational runtime. A likely split:
 - `audio-eval`: PyTorch, Transformers, soundfile, scipy, and resampling support
   for XCodec1, CLAP, and AST.
 - `openl3-worker`: Python 3.11, OpenL3 0.4.2, TensorFlow 2.13.x, NumPy 1.x,
-  SciPy, librosa, soxr, soundfile, and loudness utilities.
+  SciPy, librosa, soxr, soundfile, and loudness utilities. The reproducible
+  worker pins are in `requirements/openl3-worker-py311.txt`; its
+  `setuptools==80.9.0` pin preserves the `pkg_resources` import still used by
+  OpenL3's `resampy` dependency.
 
 Current exploratory execution command:
 
@@ -653,8 +663,8 @@ Local evidence on 2026-07-10:
   AudioCaps WAVs end to end. Model load took 19.82 seconds, CPU preprocessing
   0.05 seconds, and model inference 2.06 seconds. The diagnostic result had a
   1.0 hard-foil win rate and 0.75 retrieval recall@1. This proves the local
-  worker path, not CLAP qualification; the result remains `UNSCORED` until the
-  fixed ESC-50 gate is implemented.
+  worker path, not CLAP qualification; the result remains `UNSCORED` unless a
+  fixed calibration block is supplied and passes.
 - The same isolated environment loaded the pinned AST checkpoint on MPS and
   classified those four WAVs with raw-logit sigmoid and exact checkpoint
   labels. Model load took 13.58 seconds, CPU preprocessing 0.03 seconds, and
@@ -662,6 +672,13 @@ Local evidence on 2026-07-10:
   cases hit at least one requested label and 1/4 hit a forbidden label. These
   are plumbing diagnostics, not a qualified AST capability score, so the
   result remains `UNSCORED`.
+- An isolated Python 3.11 worker loaded OpenL3 0.4.2 and TensorFlow 2.13.1,
+  verified the pinned Stability source SHA-256, passed the FD self-tests at
+  `0`, `0`, `400`, and `30`, then scored the same four AudioCaps generations
+  against Stability's pinned full-test reference statistics. Embedding and FD
+  computation took 10.56 seconds and returned `354.3351`. The worker path is
+  therefore operational; this four-clip value is a plumbing diagnostic, not a
+  paper-comparable model score.
 
 Likely future commands, after semantic oracle qualification exists:
 

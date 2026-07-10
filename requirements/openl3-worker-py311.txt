@@ -1,0 +1,12 @@
+# Isolated FD_OpenL3 worker only. Do not install into the Audex runtime env.
+openl3==0.4.2
+tensorflow==2.13.1
+numpy==1.23.5
+scipy==1.10.1
+librosa==0.10.1
+soxr==0.3.7
+soundfile==0.12.1
+pyloudnorm==0.1.1
+resampy==0.2.2
+# resampy 0.2.2 imports pkg_resources, removed in newer setuptools.
+setuptools==80.9.0
