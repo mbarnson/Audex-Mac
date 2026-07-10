@@ -310,6 +310,11 @@ def test_run_summary_reports_category_and_generation_breakdowns(
     assert payload["diagnostics"]["started_at_utc"].endswith("Z")
     assert payload["diagnostics"]["finalized_at_utc"].endswith("Z")
     assert payload["diagnostics"]["wall_clock_seconds"] >= 0.0
+    assert payload["diagnostics"]["process_peak_rss"]["value"] > 0
+    assert (
+        payload["diagnostics"]["process_peak_rss"]["source"]
+        == "resource.getrusage(RUSAGE_SELF).ru_maxrss"
+    )
 
 
 @pytest.mark.fast

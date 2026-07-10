@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import resource
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
@@ -685,11 +686,21 @@ def _diagnostics_summary(
         "started_at_utc": started_at_utc,
         "finalized_at_utc": _utc_now(),
         "wall_clock_seconds": wall_clock_seconds,
+        "process_peak_rss": _process_peak_rss(),
     }
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _process_peak_rss() -> dict[str, Any]:
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return {
+        "value": int(usage.ru_maxrss),
+        "source": "resource.getrusage(RUSAGE_SELF).ru_maxrss",
+        "unit": "bytes_on_macos_kib_on_linux",
+    }
 
 
 def _is_number(value: Any) -> bool:
