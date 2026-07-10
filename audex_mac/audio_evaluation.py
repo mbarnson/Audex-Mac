@@ -1,0 +1,385 @@
+"""Core contracts and local artifacts for autonomous audio evaluation."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+
+class EvaluationTrack(StrEnum):
+    UNDERSTANDING = "understanding"
+    GENERATION = "generation"
+
+
+class RunVerdict(StrEnum):
+    PASS = "PASS"
+    CAPABILITY_FAIL = "CAPABILITY_FAIL"
+    PROTOCOL_FAIL = "PROTOCOL_FAIL"
+    CHARACTERIZED = "CHARACTERIZED"
+    UNSCORED = "UNSCORED"
+
+
+@dataclass(frozen=True, slots=True)
+class AudioEvaluationCase:
+    case_id: str
+    track: EvaluationTrack
+    dataset_id: str
+    dataset_revision: str
+    dataset_config: str
+    dataset_split: str
+    source_row_id: str
+    source_row_hash: str
+    license: str
+    category: str
+    prompt: str
+    expected_answer: str | None = None
+    audio_path: str | None = None
+    caption: str | None = None
+    choices: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        required = {
+            "case_id": self.case_id,
+            "dataset_id": self.dataset_id,
+            "dataset_revision": self.dataset_revision,
+            "dataset_config": self.dataset_config,
+            "dataset_split": self.dataset_split,
+            "source_row_id": self.source_row_id,
+            "source_row_hash": self.source_row_hash,
+            "license": self.license,
+            "category": self.category,
+            "prompt": self.prompt,
+        }
+        missing = [name for name, value in required.items() if not str(value).strip()]
+        if missing:
+            raise ValueError(f"audio evaluation case has empty fields: {missing}")
+        if self.track is EvaluationTrack.UNDERSTANDING:
+            if not self.audio_path:
+                raise ValueError("understanding cases require audio_path")
+            if not self.expected_answer:
+                raise ValueError("understanding cases require expected_answer")
+            if not self.choices:
+                raise ValueError("understanding cases require choices")
+        elif not self.caption:
+            raise ValueError("generation cases require caption")
+
+
+@dataclass(frozen=True, slots=True)
+class ConstrainedAnswerScore:
+    normalized_answer: str | None
+    valid: bool
+    correct: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AudioEvaluationSummary:
+    verdict: RunVerdict
+    total_cases: int
+    completed_cases: int
+    missing_case_ids: tuple[str, ...]
+    case_completeness: float
+    accuracy: float | None
+    invalid_response_rate: float | None
+    protocol_failures: tuple[str, ...]
+
+
+def derive_case_seed(master_seed: int, case_id: str) -> int:
+    """Derive a stable unsigned 64-bit seed without depending on Python hash."""
+
+    digest = hashlib.sha256(f"{int(master_seed)}\0{case_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=False)
+
+
+def select_stratified_cases(
+    cases: Iterable[AudioEvaluationCase],
+    *,
+    count: int,
+    master_seed: int,
+) -> tuple[AudioEvaluationCase, ...]:
+    """Select a deterministic equal share from every case category."""
+
+    all_cases = tuple(cases)
+    if count <= 0:
+        raise ValueError("selection count must be positive")
+    by_category: dict[str, list[AudioEvaluationCase]] = {}
+    seen_ids: set[str] = set()
+    for case in all_cases:
+        if case.case_id in seen_ids:
+            raise ValueError(f"duplicate case id: {case.case_id}")
+        seen_ids.add(case.case_id)
+        by_category.setdefault(case.category, []).append(case)
+    if not by_category:
+        raise ValueError("cannot select from an empty case set")
+    if count % len(by_category):
+        raise ValueError(
+            f"count {count} cannot be balanced across {len(by_category)} strata"
+        )
+
+    share = count // len(by_category)
+    selected: list[AudioEvaluationCase] = []
+    for category in sorted(by_category):
+        available = by_category[category]
+        if len(available) < share:
+            raise ValueError(
+                f"stratum {category!r} requires {share} cases but has {len(available)}"
+            )
+        ranked = sorted(
+            available,
+            key=lambda case: (
+                hashlib.sha256(
+                    f"{int(master_seed)}\0{case.case_id}".encode()
+                ).hexdigest(),
+                case.case_id,
+            ),
+        )
+        selected.extend(ranked[:share])
+    return tuple(sorted(selected, key=lambda case: case.case_id))
+
+
+def score_constrained_answer(
+    raw_answer: str,
+    *,
+    choices: tuple[str, ...],
+    expected: str,
+) -> ConstrainedAnswerScore:
+    """Score one exact constrained answer; prose and multiple answers fail closed."""
+
+    allowed = {choice.strip().upper() for choice in choices}
+    match = re.fullmatch(
+        r"\s*(?:answer\s*:\s*)?([A-Za-z0-9]+)[.!]?\s*",
+        raw_answer,
+        flags=re.IGNORECASE,
+    )
+    normalized = match.group(1).upper() if match is not None else None
+    valid = normalized in allowed
+    return ConstrainedAnswerScore(
+        normalized_answer=normalized if valid else None,
+        valid=valid,
+        correct=bool(valid and normalized == expected.strip().upper()),
+    )
+
+
+class AudioEvaluationRun:
+    """Own one immutable case manifest and its append-only local outputs."""
+
+    def __init__(
+        self,
+        *,
+        run_dir: Path,
+        tier: str,
+        cases: tuple[AudioEvaluationCase, ...],
+    ) -> None:
+        self.run_dir = run_dir
+        self.tier = tier
+        self.cases = cases
+        self.manifest_path = run_dir / "manifest.json"
+        self.environment_path = run_dir / "environment.json"
+        self.summary_path = run_dir / "summary.json"
+        self._case_by_id = {case.case_id: case for case in cases}
+        self._completed_case_ids: set[str] = set()
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        root: Path,
+        run_id: str,
+        tier: str,
+        master_seed: int,
+        cases: tuple[AudioEvaluationCase, ...],
+        manifest_metadata: Mapping[str, Any],
+        environment: Mapping[str, Any] | None = None,
+    ) -> AudioEvaluationRun:
+        if not run_id.strip() or Path(run_id).name != run_id:
+            raise ValueError("run_id must be one non-empty path component")
+        if len({case.case_id for case in cases}) != len(cases):
+            raise ValueError("evaluation cases must have unique case ids")
+        if not cases:
+            raise ValueError("evaluation run requires at least one case")
+        _reject_credentials(manifest_metadata)
+        _reject_credentials(environment or {})
+
+        run_dir = root / run_id
+        if run_dir.exists():
+            raise ValueError(f"evaluation run already exists: {run_dir}")
+        for relative in (
+            "understanding",
+            "generation",
+            "media/raw",
+            "media/enhanced",
+        ):
+            (run_dir / relative).mkdir(parents=True, exist_ok=True)
+
+        run = cls(run_dir=run_dir, tier=tier, cases=cases)
+        cases_by_track = {
+            track: tuple(case for case in cases if case.track is track)
+            for track in EvaluationTrack
+        }
+        for track, track_cases in cases_by_track.items():
+            case_path = run_dir / track.value / "cases.jsonl"
+            _write_jsonl(case_path, (_case_payload(case) for case in track_cases))
+            (run_dir / track.value / "outputs.jsonl").touch()
+        (run_dir / "generation" / "metrics.jsonl").touch()
+
+        manifest = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "tier": tier,
+            "master_seed": int(master_seed),
+            "case_count": len(cases),
+            "case_ids": [case.case_id for case in cases],
+            **dict(manifest_metadata),
+        }
+        run.manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        run.environment_path.write_text(
+            json.dumps(dict(environment or {}), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return run
+
+    def record_output(self, *, case_id: str, payload: Mapping[str, Any]) -> None:
+        case = self._case_by_id.get(case_id)
+        if case is None:
+            raise ValueError(f"output references unknown case: {case_id}")
+        if case_id in self._completed_case_ids:
+            raise ValueError(f"output already recorded for case: {case_id}")
+        _reject_credentials(payload)
+        output_path = self.run_dir / case.track.value / "outputs.jsonl"
+        with output_path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {"case_id": case_id, **dict(payload)},
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        self._completed_case_ids.add(case_id)
+
+    def record_generation_metrics(
+        self, *, case_id: str, payload: Mapping[str, Any]
+    ) -> None:
+        case = self._case_by_id.get(case_id)
+        if case is None:
+            raise ValueError(f"metrics reference unknown case: {case_id}")
+        if case.track is not EvaluationTrack.GENERATION:
+            raise ValueError(f"metrics require a generation case: {case_id}")
+        _reject_credentials(payload)
+        path = self.run_dir / "generation" / "metrics.jsonl"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps({"case_id": case_id, **dict(payload)}, sort_keys=True) + "\n"
+            )
+
+    def finalize(
+        self,
+        *,
+        required_oracles_qualified: bool,
+        protocol_failures: tuple[str, ...] = (),
+    ) -> AudioEvaluationSummary:
+        missing = tuple(
+            case.case_id
+            for case in self.cases
+            if case.case_id not in self._completed_case_ids
+        )
+        outputs = self._load_outputs()
+        scored = [output for output in outputs if "correct" in output]
+        accuracy = (
+            sum(bool(output["correct"]) for output in scored) / len(scored)
+            if scored
+            else None
+        )
+        invalid_rate = (
+            sum(not bool(output.get("valid", False)) for output in scored) / len(scored)
+            if scored
+            else None
+        )
+        effective_failures = list(protocol_failures)
+        if not required_oracles_qualified:
+            effective_failures.append("required_oracle_qualification_failed")
+        if missing:
+            effective_failures.append("incomplete_cases")
+        if effective_failures:
+            verdict = RunVerdict.PROTOCOL_FAIL
+        else:
+            verdict = RunVerdict.CHARACTERIZED
+        summary = AudioEvaluationSummary(
+            verdict=verdict,
+            total_cases=len(self.cases),
+            completed_cases=len(self._completed_case_ids),
+            missing_case_ids=missing,
+            case_completeness=len(self._completed_case_ids) / len(self.cases),
+            accuracy=accuracy,
+            invalid_response_rate=invalid_rate,
+            protocol_failures=tuple(dict.fromkeys(effective_failures)),
+        )
+        self.summary_path.write_text(
+            json.dumps(_summary_payload(summary), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return summary
+
+    def _load_outputs(self) -> list[dict[str, Any]]:
+        outputs: list[dict[str, Any]] = []
+        for track in EvaluationTrack:
+            path = self.run_dir / track.value / "outputs.jsonl"
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    outputs.append(json.loads(line))
+        return outputs
+
+
+def _case_payload(case: AudioEvaluationCase) -> dict[str, Any]:
+    payload = asdict(case)
+    payload["track"] = case.track.value
+    payload["choices"] = list(case.choices)
+    return payload
+
+
+def _summary_payload(summary: AudioEvaluationSummary) -> dict[str, Any]:
+    payload = asdict(summary)
+    payload["verdict"] = summary.verdict.value
+    payload["missing_case_ids"] = list(summary.missing_case_ids)
+    payload["protocol_failures"] = list(summary.protocol_failures)
+    return payload
+
+
+def _write_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(dict(row), sort_keys=True) + "\n")
+
+
+def _reject_credentials(value: Any, *, path: str = "manifest") -> None:
+    credential_keys = {
+        "api_key",
+        "credential",
+        "credentials",
+        "hf_token",
+        "openai_api_key",
+        "openrouter_api_key",
+        "password",
+        "secret",
+        "token",
+    }
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            key = str(raw_key).lower()
+            if key in credential_keys or key.endswith(
+                ("_api_key", "_password", "_secret")
+            ):
+                raise ValueError(
+                    f"credential-like manifest key is forbidden: {path}.{key}"
+                )
+            _reject_credentials(child, path=f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _reject_credentials(child, path=f"{path}[{index}]")

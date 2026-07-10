@@ -209,6 +209,7 @@ Known limitations:
 - [Current evidence and limitations](docs/engineering/viability.md)
 - [vLLM Metal engineering history](docs/engineering/vllm-metal.md)
 - [Patch ledger](docs/engineering/patches.md)
+- [Autonomous audio-capability evaluation](docs/engineering/autonomous-audio-evaluation.md)
 - [Stable patch contract](PATCH.md)
 
 ## License and Repository Hygiene

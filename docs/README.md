@@ -25,6 +25,9 @@ engineering and operating material lives here.
   its upstream seam, validation, and reapplication notes.
 - [NVFP4 conversion](engineering/nvfp4-quantization.md) — reproducible,
   quality-first Audex-30B routed-expert quantization.
+- [Autonomous audio-capability evaluation](engineering/autonomous-audio-evaluation.md)
+  — engineering design and implementation foundation for non-speech audio
+  understanding and text-to-audio generation.
 
 The stable implementation contract remains at [PATCH.md](../PATCH.md), as
 requested by the project owner.

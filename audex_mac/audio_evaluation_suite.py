@@ -1,0 +1,179 @@
+"""Pinned dataset suite planning for autonomous Audex audio evaluation."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from .audio_evaluation import AudioEvaluationCase
+from .audio_evaluation_datasets import (
+    MaterializedAudio,
+    build_caption_cases,
+    build_esc50_cases,
+    build_mmau_cases,
+)
+from .audio_evaluation_hf import DatasetPin, select_stratified_rows
+
+MMAU_PIN = DatasetPin(
+    repo_id="TwinkStart/MMAU",
+    revision="42bd874593a0beed966e505411e896a808f9931f",
+    config="default",
+    split="v05.15.25",
+    license="Apache-2.0",
+    expected_rows=1000,
+)
+ESC50_PIN = DatasetPin(
+    repo_id="ashraq/esc50",
+    revision="e3e2a63ffff66b9a9735524551e3818e96af03ee",
+    config="default",
+    split="train",
+    license="CC-BY-NC-3.0",
+    expected_rows=2000,
+)
+AUDIOCAPS_CAPTION_PIN = DatasetPin(
+    repo_id="d0rj/audiocaps",
+    revision="54887eb2a01bf806cdbec0aca41fd85628dac0e4",
+    config="default",
+    split="test",
+    license="MIT",
+    expected_rows=4875,
+)
+SONG_DESCRIBER_PIN = DatasetPin(
+    repo_id="renumics/song-describer-dataset",
+    revision="dc39062efec7515add304b98a54da2948709a808",
+    config="default",
+    split="train",
+    license="CC-BY-SA-4.0",
+    expected_rows=746,
+)
+
+SMOKE_MMAU_PER_DOMAIN = 8
+SMOKE_ESC50_CASES = 8
+SMOKE_AUDIOCAPS_CASES = 4
+SMOKE_SONG_DESCRIBER_CASES = 4
+
+
+def build_smoke_cases_from_rows(
+    *,
+    mmau_rows: tuple[Mapping[str, Any], ...],
+    esc50_rows: tuple[Mapping[str, Any], ...],
+    audiocaps_rows: tuple[Mapping[str, Any], ...],
+    song_describer_rows: tuple[Mapping[str, Any], ...],
+    master_seed: int,
+    materialize_audio: Callable[[Mapping[str, Any]], MaterializedAudio],
+) -> tuple[AudioEvaluationCase, ...]:
+    """Build the smoke-tier case manifest from already fetched pinned rows."""
+
+    mmau_selected = select_stratified_rows(
+        (
+            row
+            for row in mmau_rows
+            if str(row.get("task", "")).lower() in {"sound", "music"}
+        ),
+        count=SMOKE_MMAU_PER_DOMAIN * 2,
+        master_seed=master_seed,
+        row_id=lambda row: str(row.get("id", "")),
+        stratum=lambda row: str(row.get("task", "")),
+    )
+    esc_selected = select_stratified_rows(
+        esc50_rows,
+        count=SMOKE_ESC50_CASES,
+        master_seed=master_seed,
+        row_id=lambda row: str(row.get("filename", row.get("file", ""))),
+        stratum=lambda row: str(row.get("category", "")),
+    )
+    audiocaps_selected = _select_rows(
+        audiocaps_rows,
+        count=SMOKE_AUDIOCAPS_CASES,
+        master_seed=master_seed,
+        row_id=lambda row: str(row.get("audiocap_id", "")),
+    )
+    song_selected: tuple[Mapping[str, Any], ...] = ()
+    if song_describer_rows:
+        song_selected = _select_rows(
+            song_describer_rows,
+            count=SMOKE_SONG_DESCRIBER_CASES,
+            master_seed=master_seed,
+            row_id=lambda row: str(row.get("caption_id", row.get("track_id", ""))),
+        )
+
+    esc_foils = _foil_by_category(esc50_rows)
+    cases: list[AudioEvaluationCase] = []
+    cases.extend(
+        build_mmau_cases(
+            mmau_selected,
+            dataset_revision=MMAU_PIN.revision,
+            license=MMAU_PIN.license,
+            materialize_audio=materialize_audio,
+        )
+    )
+    cases.extend(
+        build_esc50_cases(
+            esc_selected,
+            dataset_revision=ESC50_PIN.revision,
+            materialize_audio=materialize_audio,
+            foil_by_category=esc_foils,
+        )
+    )
+    cases.extend(
+        build_caption_cases(
+            audiocaps_selected,
+            dataset_id=AUDIOCAPS_CAPTION_PIN.repo_id,
+            dataset_revision=AUDIOCAPS_CAPTION_PIN.revision,
+            dataset_config=AUDIOCAPS_CAPTION_PIN.config,
+            dataset_split=AUDIOCAPS_CAPTION_PIN.split,
+            license=AUDIOCAPS_CAPTION_PIN.license,
+            id_field="audiocap_id",
+            caption_field="caption",
+            category="audiocaps",
+        )
+    )
+    if song_selected:
+        cases.extend(
+            build_caption_cases(
+                song_selected,
+                dataset_id=SONG_DESCRIBER_PIN.repo_id,
+                dataset_revision=SONG_DESCRIBER_PIN.revision,
+                dataset_config=SONG_DESCRIBER_PIN.config,
+                dataset_split=SONG_DESCRIBER_PIN.split,
+                license=SONG_DESCRIBER_PIN.license,
+                id_field="caption_id",
+                caption_field="caption",
+                category="song-describer",
+            )
+        )
+    return tuple(cases)
+
+
+def _select_rows(
+    rows: tuple[Mapping[str, Any], ...],
+    *,
+    count: int,
+    master_seed: int,
+    row_id: Callable[[Mapping[str, Any]], str],
+) -> tuple[Mapping[str, Any], ...]:
+    if len(rows) < count:
+        raise ValueError(f"requires {count} rows but has {len(rows)}")
+    return select_stratified_rows(
+        rows,
+        count=count,
+        master_seed=master_seed,
+        row_id=row_id,
+        stratum=lambda _row: "all",
+    )
+
+
+def _foil_by_category(rows: tuple[Mapping[str, Any], ...]) -> dict[str, str]:
+    categories = sorted(
+        {
+            str(row.get("category", "")).strip().lower()
+            for row in rows
+            if str(row.get("category", "")).strip()
+        }
+    )
+    if len(categories) < 2:
+        raise ValueError("ESC-50 foil mapping requires at least two categories")
+    return {
+        category: categories[(index + 1) % len(categories)]
+        for index, category in enumerate(categories)
+    }
