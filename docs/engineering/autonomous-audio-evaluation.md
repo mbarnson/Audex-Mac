@@ -93,8 +93,9 @@ Generation must use the audio codec path, not the speech codec path:
 - RVQ phases must cycle `0, 1, 2, 3` until `<audiogen_end>`.
 
 Both raw and enhanced outputs should be retained locally. Raw 16 kHz output helps
-debug token/decode failures. Enhanced 48 kHz stereo output is required for
-paper-style comparison.
+debug token/decode failures. Enhanced 48 kHz stereo output is retained as the
+high-bandwidth metric source; the pinned paper-style FD_OpenL3 implementation
+then peak-normalizes and resamples it to 44.1 kHz.
 
 Core generation datasets:
 
@@ -112,9 +113,10 @@ Pinned dataset sources:
 | SongDescriber | `renumics/song-describer-dataset` | `dc39062efec7515add304b98a54da2948709a808` | `default` | `train` | 746 | `CC-BY-SA-4.0` from Zenodo record `10.5281/zenodo.10072001` |
 
 The AudioCaps caption mirror is used for the 4,875-caption generation manifest.
-The OpenSound audio mirror is useful for reference-audio metrics but does not
-currently expose all 4,875 test clips, so full FD_OpenL3 parity needs either the
-paper-compatible source layout or an explicit reconciliation step.
+The OpenSound audio mirror is useful for reference-audio inspection but does not
+currently expose all 4,875 test clips. Paper-style FD_OpenL3 therefore uses the
+precomputed AudioCaps reference statistics shipped by the pinned Stability AI
+metric implementation rather than silently scoring against the smaller mirror.
 
 ## Oracles And Metrics
 
@@ -145,7 +147,9 @@ Suggested local oracle stack:
 - `MIT/ast-finetuned-audioset-10-10-0.4593`, pinned to revision
   `f826b80d28226b62986cc218e5cec390b1096902`, for broad AudioSet event
   sanity checks.
-- Stability AI `stable-audio-metrics` for FD_OpenL3 paper-style scoring.
+- OpenL3 0.4.2 in an isolated Python 3.11 worker for FD_OpenL3 diagnostics.
+  Stability AI `stable-audio-metrics` is the pinned paper-parity implementation
+  loaded by that worker.
 
 Kimi-Audio and Mistral Voxtral can be qualified peers, not authorities. They may
 serve as peer baselines and supplemental semantic scorers only after fail-loud
@@ -290,6 +294,13 @@ Full FD_OpenL3 parameters:
 - AudioCaps: OpenL3 `env`, `mel256`, 512-dimensional embeddings, 0.5-second hop.
 - SongDescriber: OpenL3 `music`, `mel256`, 512-dimensional embeddings,
   0.5-second hop.
+- Stability AI `stable-audio-metrics` revision
+  `fd55536cc812c460ecc421220864993c7f168184`, whose pinned `src/openl3_fd.py`
+  SHA-256 is
+  `03cbfa6c524ad5af992c390f23c5384dfda242de09931f9a7162132fa7095f21`.
+- Stereo channel handling, 44.1 kHz metric bandwidth, and batch size 4.
+- Pinned precomputed reference-statistics NPZ for the matching dataset and
+  exact metric parameters.
 - Metric input: ten-second generated clips, peak normalized to -1 dB, resampled
   and channel-handled by the pinned metric implementation.
 - AudioCaps file naming: generated files named by `audiocap_id`; the full test
@@ -506,11 +517,15 @@ Current implementation status:
   the worker marks these diagnostics `UNSCORED` rather than presenting them as
   a qualified oracle result. AST oracle qualification and calibrated label
   thresholds remain future work.
-- `audex_mac/audio_evaluation_openl3.py` and
+- `audex_mac/audio_evaluation_openl3.py`,
+  `audex_mac/audio_evaluation_openl3_backend.py`, and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
-  worker request/command/result boundary and fail loudly outside Python 3.11 or
-  without worker-only metric dependencies. FD_OpenL3 computation itself remains
-  future work.
+  worker request/command/result boundary. The version-2 request pins the exact
+  Stability source hash, stereo/44.1-kHz/batch-4 transform, dataset-specific
+  generated directory, exact corpus size, and precomputed reference statistics.
+  The worker fails loudly outside Python 3.11, rejects mixed or incomplete
+  corpora, self-qualifies identical/permuted/unrelated/fixed-vector FD behavior,
+  and delegates extraction and scoring to the pinned official source file.
 - `audex_mac/audio_evaluation_cli.py` exposes
   `audex-mac eval-audio-capabilities --tier smoke --materialize-only` for
   pinned manifest/cache preparation and
@@ -531,12 +546,16 @@ Current implementation status:
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
   pins/omissions, CLAP/AST/OpenL3 oracle identities and qualification gates,
   git commit and dirty diff hash, host metadata, and key dependency versions
-  without recording credentials. CLAP caption-alignment and AST event-sanity
-  scoring exist behind isolated worker boundaries, but semantic generation
-  oracle qualification is not complete; use `--generation-oracles unqualified`
-  to force the previous fail-closed placeholder behavior. Standard/Full
-  materialization writes
-  `generation/openl3-request.json`; completed generation runs write
+  without recording credentials. CLAP caption-alignment, AST event-sanity, and
+  pinned OpenL3 FD scoring exist behind isolated worker boundaries, but
+  semantic generation oracle qualification is not complete; use
+  `--generation-oracles unqualified` to force the previous fail-closed
+  placeholder behavior. Materialization alone does not write a runnable
+  `generation/openl3-request.json`: the request is valid only after exact
+  dataset-specific WAV corpora and reference-statistics paths exist. Supplying
+  `--openl3-reference-stats-root` during Standard/Full materialization records
+  those pinned reference-statistics paths and writes the request. Completed
+  generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
   `generation/ast-request.json` for generated cases with explicit local
   structured-control AST labels. Broader AST label-map fixtures remain future
@@ -581,7 +600,7 @@ Keep evaluator dependencies out of the conversational runtime. A likely split:
 - `audio-eval`: PyTorch, Transformers, soundfile, scipy, and resampling support
   for XCodec1, CLAP, and AST.
 - `openl3-worker`: Python 3.11, OpenL3 0.4.2, TensorFlow 2.13.x, NumPy 1.x,
-  librosa, soxr, soundfile, and loudness utilities.
+  SciPy, librosa, soxr, soundfile, and loudness utilities.
 
 Current exploratory execution command:
 

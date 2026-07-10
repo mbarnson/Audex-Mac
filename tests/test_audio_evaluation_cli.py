@@ -156,7 +156,8 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
         == "f826b80d28226b62986cc218e5cec390b1096902"
     )
     assert (
-        manifest["oracle_registry"]["openl3_fd"]["status"] == "planned_external_worker"
+        manifest["oracle_registry"]["openl3_fd"]["status"]
+        == "implemented_external_worker_unqualified"
     )
     assert manifest["understanding_protocol"]["scoring"].startswith("exact")
     assert environment["hf_token_present"] is True
@@ -382,7 +383,7 @@ def test_audio_evaluation_cli_materializes_standard_manifest(
     )
     assert generation_cases.count("\n") == 152
     assert "audex-mac/ualm-inspired-controls" in generation_cases
-    assert (run_dir / "generation" / "openl3-request.json").is_file()
+    assert not (run_dir / "generation" / "openl3-request.json").exists()
 
 
 @pytest.mark.parametrize("tier", ["standard", "full"])
@@ -459,14 +460,63 @@ def test_audio_evaluation_cli_materializes_full_manifest(
     assert (run_dir / "generation" / "cases.jsonl").read_text(encoding="utf-8").count(
         "\n"
     ) == 32
+    assert not (run_dir / "generation" / "openl3-request.json").exists()
+
+
+def test_audio_evaluation_cli_writes_openl3_request_when_reference_stats_are_configured(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _full_rows()
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "full",
+            "--materialize-only",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "full-openl3",
+            "--openl3-reference-stats-root",
+            str(tmp_path / "reference-stats"),
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / "full-openl3"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["openl3_reference_stats_root"] == str(tmp_path / "reference-stats")
     openl3_request = json.loads(
         (run_dir / "generation" / "openl3-request.json").read_text(encoding="utf-8")
     )
-    assert openl3_request["run_id"] == "full-test"
+    assert openl3_request["run_id"] == "full-openl3"
+    assert openl3_request["schema_version"] == 2
     assert [request["dataset"] for request in openl3_request["requests"]] == [
         "audiocaps",
         "song-describer",
     ]
+    assert openl3_request["requests"][0]["expected_file_count"] == 4875
+    assert openl3_request["requests"][1]["expected_file_count"] == 746
 
 
 def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_oracles(

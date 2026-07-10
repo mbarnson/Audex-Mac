@@ -152,6 +152,16 @@ def main(
         ),
     )
     parser.add_argument(
+        "--openl3-reference-stats-root",
+        type=Path,
+        default=None,
+        help=(
+            "directory containing pinned full-tier stable-audio-metrics OpenL3 "
+            "reference .npz files; when set for standard/full materialization, "
+            "writes generation/openl3-request.json"
+        ),
+    )
+    parser.add_argument(
         "--capability-target",
         action="append",
         default=None,
@@ -313,6 +323,11 @@ def main(
                 **asdict(TtaRecipe()),
             },
             "generation_oracles": args.generation_oracles,
+            "openl3_reference_stats_root": (
+                str(args.openl3_reference_stats_root)
+                if args.openl3_reference_stats_root is not None
+                else None
+            ),
             "capability_targets": capability_targets,
             "oracle_registry": _oracle_registry_payload(),
             "omitted_datasets": _omitted_datasets(args),
@@ -340,7 +355,11 @@ def main(
             ),
         },
     )
-    _write_planned_worker_requests(run, tier=args.tier)
+    _write_openl3_worker_request_if_configured(
+        run,
+        tier=args.tier,
+        reference_stats_root=args.openl3_reference_stats_root,
+    )
     if args.materialize_only:
         print(f"Audio evaluation materialized: {run.run_dir}")
         print(f"Cases: {len(cases)}")
@@ -445,8 +464,8 @@ def _oracle_registry_payload() -> dict[str, Any]:
             },
         },
         "openl3_fd": {
-            "status": "planned_external_worker",
-            "implementation": "stable-audio-metrics",
+            "status": "implemented_external_worker_unqualified",
+            "implementation": "pinned_stable_audio_metrics_openl3_fd",
             "worker_python": "3.11",
             "purpose": "full_tier_paper_style_fd_openl3",
             "qualification_gate": {
@@ -498,13 +517,21 @@ def _build_cases_from_rows(
     raise ValueError(f"unsupported audio evaluation tier: {tier}")
 
 
-def _write_planned_worker_requests(run: AudioEvaluationRun, *, tier: str) -> None:
-    if tier not in {"standard", "full"}:
+def _write_openl3_worker_request_if_configured(
+    run: AudioEvaluationRun,
+    *,
+    tier: str,
+    reference_stats_root: Path | None,
+) -> None:
+    if tier not in {"standard", "full"} or reference_stats_root is None:
         return
     write_openl3_worker_request(
         run.run_dir / "generation" / "openl3-request.json",
         run_id=run.run_dir.name,
-        requests=default_full_openl3_requests(run.run_dir),
+        requests=default_full_openl3_requests(
+            run.run_dir,
+            reference_stats_root=reference_stats_root,
+        ),
     )
 
 
