@@ -308,6 +308,24 @@ def test_run_summary_reports_category_and_generation_breakdowns(
     }
     assert payload["generation"] == {
         "completed_cases": 1,
+        "semantic_metrics": {
+            "ast": {
+                "expected_label_cases": 0,
+                "expected_label_hit_rate": None,
+                "forbidden_label_cases": 0,
+                "forbidden_label_false_positive_rate": None,
+            },
+            "clap": {
+                "hard_foil_cases": 0,
+                "hard_foil_win_rate": None,
+                "mean_caption_similarity": None,
+                "mean_hard_foil_margin": None,
+                "retrieval_top1_cases": 0,
+                "retrieval_top1_rate": None,
+                "scored_cases": 0,
+            },
+            "openl3": {"fd_openl3_by_dataset": {}},
+        },
         "signal_failures": {"clipped_waveform": 1},
         "structural_failures": {"missing_end_token": 1},
         "structurally_valid": 0,
@@ -348,6 +366,78 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         payload["diagnostics"]["process_peak_rss"]["source"]
         == "resource.getrusage(RUSAGE_SELF).ru_maxrss"
     )
+
+
+@pytest.mark.fast
+def test_run_summary_aggregates_canonical_semantic_generation_metrics(
+    tmp_path: Path,
+) -> None:
+    cases = (_generation_case("audiocaps-1"), _generation_case("audiocaps-2"))
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="semantic-metrics",
+        tier="standard",
+        master_seed=17,
+        cases=cases,
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+    for case in cases:
+        run.record_output(
+            case_id=case.case_id,
+            payload={
+                "structurally_valid": True,
+                "structure_failures": [],
+                "signal_metrics": {"finite": True, "nonempty": True},
+            },
+        )
+    run.record_generation_metrics(
+        case_id="audiocaps-1",
+        payload={
+            "caption_similarity": 0.8,
+            "hard_foil_margin": 0.3,
+            "hard_foil_win": True,
+            "retrieval_rank": 1,
+            "expected_label_hit": True,
+            "forbidden_label_false_positive": False,
+        },
+    )
+    run.record_generation_metrics(
+        case_id="audiocaps-2",
+        payload={
+            "caption_similarity": 0.4,
+            "hard_foil_margin": -0.1,
+            "hard_foil_win": False,
+            "retrieval_rank": 2,
+            "expected_label_hit": False,
+            "forbidden_label_false_positive": True,
+        },
+    )
+    run.record_generation_metrics(
+        case_id="audiocaps-2",
+        payload={"dataset": "audiocaps", "fd_openl3": 66.9},
+    )
+
+    run.finalize(required_oracles_qualified=True)
+
+    payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
+    assert payload["generation"]["semantic_metrics"] == {
+        "ast": {
+            "expected_label_cases": 2,
+            "expected_label_hit_rate": 0.5,
+            "forbidden_label_cases": 2,
+            "forbidden_label_false_positive_rate": 0.5,
+        },
+        "clap": {
+            "hard_foil_cases": 2,
+            "hard_foil_win_rate": 0.5,
+            "mean_caption_similarity": pytest.approx(0.6),
+            "mean_hard_foil_margin": pytest.approx(0.1),
+            "retrieval_top1_cases": 2,
+            "retrieval_top1_rate": 0.5,
+            "scored_cases": 2,
+        },
+        "openl3": {"fd_openl3_by_dataset": {"audiocaps": 66.9}},
+    }
 
 
 @pytest.mark.fast

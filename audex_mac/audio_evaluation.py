@@ -347,7 +347,12 @@ class AudioEvaluationRun:
             outputs_by_case_id,
         )
         balanced_accuracy = _balanced_accuracy(understanding_by_category)
-        generation = _generation_summary(self.cases, outputs_by_case_id)
+        generation_metrics = self._load_generation_metrics()
+        generation = _generation_summary(
+            self.cases,
+            outputs_by_case_id,
+            generation_metrics,
+        )
         technical_failures = _technical_failure_summary(
             self.cases,
             outputs_by_case_id,
@@ -423,6 +428,14 @@ class AudioEvaluationRun:
                 if line.strip():
                     outputs.append(json.loads(line))
         return outputs
+
+    def _load_generation_metrics(self) -> list[dict[str, Any]]:
+        path = self.run_dir / "generation" / "metrics.jsonl"
+        metrics: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                metrics.append(json.loads(line))
+        return metrics
 
 
 def _case_payload(case: AudioEvaluationCase) -> dict[str, Any]:
@@ -588,6 +601,7 @@ def _bootstrap_accuracy_ci(
 def _generation_summary(
     cases: tuple[AudioEvaluationCase, ...],
     outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+    metric_outputs: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any]:
     generation_cases = [
         case for case in cases if case.track is EvaluationTrack.GENERATION
@@ -626,7 +640,92 @@ def _generation_summary(
         ),
         "structural_failures": dict(sorted(structural_failures.items())),
         "signal_failures": dict(sorted(signal_failures.items())),
+        "semantic_metrics": _semantic_generation_metrics(metric_outputs),
     }
+
+
+def _semantic_generation_metrics(
+    metric_outputs: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    metrics = tuple(metric_outputs)
+    caption_similarity = _numeric_values(metrics, "caption_similarity")
+    hard_foil_wins = _bool_values(metrics, "hard_foil_win")
+    hard_foil_margins = _numeric_values(metrics, "hard_foil_margin")
+    retrieval_top1 = _retrieval_top1_values(metrics)
+    ast_expected_hits = _bool_values(metrics, "expected_label_hit")
+    ast_forbidden_fps = _bool_values(metrics, "forbidden_label_false_positive")
+    return {
+        "clap": {
+            "scored_cases": len(caption_similarity),
+            "mean_caption_similarity": _mean(caption_similarity),
+            "hard_foil_cases": len(hard_foil_wins),
+            "hard_foil_win_rate": _mean(hard_foil_wins),
+            "mean_hard_foil_margin": _mean(hard_foil_margins),
+            "retrieval_top1_cases": len(retrieval_top1),
+            "retrieval_top1_rate": _mean(retrieval_top1),
+        },
+        "ast": {
+            "expected_label_cases": len(ast_expected_hits),
+            "expected_label_hit_rate": _mean(ast_expected_hits),
+            "forbidden_label_cases": len(ast_forbidden_fps),
+            "forbidden_label_false_positive_rate": _mean(ast_forbidden_fps),
+        },
+        "openl3": {
+            "fd_openl3_by_dataset": _fd_openl3_by_dataset(metrics),
+        },
+    }
+
+
+def _numeric_values(
+    metrics: Iterable[Mapping[str, Any]],
+    key: str,
+) -> tuple[float, ...]:
+    values: list[float] = []
+    for metric in metrics:
+        value = metric.get(key)
+        if _is_number(value):
+            values.append(float(value))
+    return tuple(values)
+
+
+def _bool_values(
+    metrics: Iterable[Mapping[str, Any]],
+    key: str,
+) -> tuple[float, ...]:
+    values: list[float] = []
+    for metric in metrics:
+        value = metric.get(key)
+        if isinstance(value, bool):
+            values.append(1.0 if value else 0.0)
+    return tuple(values)
+
+
+def _retrieval_top1_values(metrics: Iterable[Mapping[str, Any]]) -> tuple[float, ...]:
+    values: list[float] = []
+    for metric in metrics:
+        rank = metric.get("retrieval_rank")
+        if _is_number(rank):
+            values.append(1.0 if int(float(rank)) == 1 else 0.0)
+    return tuple(values)
+
+
+def _fd_openl3_by_dataset(metrics: Iterable[Mapping[str, Any]]) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for metric in metrics:
+        nested = metric.get("fd_openl3_by_dataset")
+        if isinstance(nested, Mapping):
+            for dataset, value in nested.items():
+                if _is_number(value):
+                    values[str(dataset)] = float(value)
+        dataset = metric.get("dataset")
+        fd_openl3 = metric.get("fd_openl3")
+        if dataset is not None and _is_number(fd_openl3):
+            values[str(dataset)] = float(fd_openl3)
+    return dict(sorted(values.items()))
+
+
+def _mean(values: tuple[float, ...]) -> float | None:
+    return sum(values) / len(values) if values else None
 
 
 def _technical_failure_summary(

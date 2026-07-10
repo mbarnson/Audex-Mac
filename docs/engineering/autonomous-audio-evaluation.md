@@ -440,7 +440,10 @@ Current implementation status:
   per-category understanding accuracy,
   balanced accuracy, YES/NO false-positive and false-negative rates,
   deterministic bootstrap confidence intervals for accuracy, generation
-  structural/signal failure counts, technical failure rates, and per-track
+  structural/signal failure counts, recorded generation semantic metrics
+  (CLAP caption similarity, hard-foil win rate, CLAP retrieval top-1 rate, AST
+  expected-label hit rate, AST forbidden-label false-positive rate, and
+  FD_OpenL3 by dataset when present), technical failure rates, and per-track
   timing/throughput diagnostics with run start/finalization timestamps,
   wall-clock seconds, and platform-reported process peak RSS.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
@@ -475,13 +478,17 @@ Current implementation status:
   silence, clipping, RMS audibility, DC offset, and flat/no-variation waveforms;
   it also records a lightweight zero-crossing activity proxy for bandwidth
   sanity. It does not score caption alignment.
-- `audex_mac/audio_evaluation_clap.py` and
+- `audex_mac/audio_evaluation_clap.py`,
+  `audex_mac/audio_evaluation_clap_backend.py`, and
   `audex_mac/audio_evaluation_clap_worker.py` define the isolated CLAP worker
-  request/command/result boundary for caption similarity, hard-foil win, and
-  hard-foil margin metrics. The request contract requires generated WAV paths,
-  requested captions, and distinct deterministic hard-foil captions. The worker
-  currently fails loud with `UNSCORED`; pinned CLAP embedding/scoring and
-  qualification remain future work.
+  request/command/result boundary for caption similarity, hard-foil win,
+  hard-foil margin, and retrieval-rank metrics. The request contract requires
+  generated WAV paths, requested captions, and distinct deterministic hard-foil
+  captions. The worker loads the pinned LAION CLAP checkpoint through
+  Transformers, requires an explicit available device (`cpu`, `mps`, or
+  `cuda`), computes per-case metrics, and records model/preprocess/inference
+  timing. CLAP oracle qualification and calibrated capability thresholds remain
+  future work.
 - `audex_mac/audio_evaluation_ast.py` and
   `audex_mac/audio_evaluation_ast_worker.py` define the isolated AST worker
   request/command/result boundary for AudioSet-style event sanity checks. The
@@ -516,10 +523,11 @@ Current implementation status:
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
   pins/omissions, planned CLAP/AST/OpenL3 oracle identities and qualification
   gates, git commit and dirty diff hash, host metadata, and key dependency
-  versions without recording credentials. Semantic generation metrics remain
-  future work; use
-  `--generation-oracles unqualified` to force the previous fail-closed
-  placeholder behavior. Standard/Full materialization writes
+  versions without recording credentials. CLAP caption-alignment scoring exists
+  behind the isolated worker boundary, but semantic generation oracle
+  qualification is not complete; use `--generation-oracles unqualified` to
+  force the previous fail-closed placeholder behavior. Standard/Full
+  materialization writes
   `generation/openl3-request.json`; completed generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
   `generation/ast-request.json` for generated cases with explicit local

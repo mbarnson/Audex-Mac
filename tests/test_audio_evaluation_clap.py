@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,7 @@ from audex_mac.audio_evaluation_clap import (
     load_clap_worker_result,
     write_clap_worker_request,
 )
+from audex_mac.audio_evaluation_clap_backend import require_torch_device
 from audex_mac.audio_evaluation_clap_worker import run_worker
 
 pytestmark = pytest.mark.fast
@@ -186,6 +188,11 @@ def test_clap_worker_rejects_invalid_request_schema(
         json.dumps(
             {
                 "schema_version": 1,
+                "run_id": "invalid-run",
+                "model": {
+                    "repo_id": "laion/clap-htsat-unfused",
+                    "revision": CLAP_REVISION,
+                },
                 "requests": [
                     {
                         "case_id": "bad",
@@ -214,3 +221,131 @@ def test_clap_worker_rejects_invalid_request_schema(
     assert payload["status"] == "PROTOCOL_FAIL"
     assert payload["reason"] == "invalid_clap_request"
     assert "hard_foil_caption" in payload["detail"]
+
+
+def test_clap_worker_scores_alignment_foils_and_retrieval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    output_path = tmp_path / "result.json"
+    one_wav = tmp_path / "one.wav"
+    two_wav = tmp_path / "two.wav"
+    one_wav.write_bytes(b"RIFF one")
+    two_wav.write_bytes(b"RIFF two")
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "fixture-run",
+                "model": {
+                    "repo_id": "laion/clap-htsat-unfused",
+                    "revision": CLAP_REVISION,
+                },
+                "requests": [
+                    {
+                        "case_id": "dog",
+                        "generated_wav_path": str(one_wav),
+                        "caption": "A dog barks.",
+                        "hard_foil_caption": "A bell rings.",
+                    },
+                    {
+                        "case_id": "rain",
+                        "generated_wav_path": str(two_wav),
+                        "caption": "Rain falls.",
+                        "hard_foil_caption": "A piano plays.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBackend:
+        model_load_seconds = 0.25
+
+        def embed_text(self, texts: list[str]) -> tuple[Any, float, float]:
+            assert texts == [
+                "A dog barks.",
+                "Rain falls.",
+                "A bell rings.",
+                "A piano plays.",
+            ]
+            return (
+                [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
+                0.10,
+                0.20,
+            )
+
+        def embed_audio(self, paths: list[Path]) -> tuple[Any, float, float]:
+            assert paths == [one_wav, two_wav]
+            return ([[1.0, 0.0], [0.0, 1.0]], 0.30, 0.40)
+
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_clap_worker._missing_modules",
+        lambda _names: (),
+    )
+
+    exit_code = run_worker(
+        request_path=request_path,
+        output_path=output_path,
+        device="mps",
+        backend_factory=lambda **_kwargs: FakeBackend(),
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert payload["model"] == {
+        "repo_id": "laion/clap-htsat-unfused",
+        "revision": CLAP_REVISION,
+        "device": "mps",
+    }
+    assert payload["metrics"] == {
+        "caption_similarity_mean": 1.0,
+        "hard_foil_margin_mean": 1.0,
+        "hard_foil_win_rate": 1.0,
+        "retrieval_recall_at_1": 1.0,
+    }
+    assert payload["per_case"] == [
+        {
+            "caption_similarity": 1.0,
+            "case_id": "dog",
+            "hard_foil_margin": 1.0,
+            "hard_foil_similarity": 0.0,
+            "hard_foil_win": True,
+            "retrieval_rank": 1,
+        },
+        {
+            "caption_similarity": 1.0,
+            "case_id": "rain",
+            "hard_foil_margin": 1.0,
+            "hard_foil_similarity": 0.0,
+            "hard_foil_win": True,
+            "retrieval_rank": 1,
+        },
+    ]
+    assert payload["timings"] == {
+        "inference_seconds": 0.6,
+        "model_load_seconds": 0.25,
+        "preprocessing_seconds": 0.4,
+    }
+
+
+def test_clap_backend_requires_the_explicit_accelerator() -> None:
+    class Availability:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class FakeTorch:
+        cuda = Availability()
+
+        class backends:
+            mps = Availability()
+
+    with pytest.raises(RuntimeError, match="MPS.*not available"):
+        require_torch_device(FakeTorch(), "mps")
+    with pytest.raises(RuntimeError, match="CUDA.*not available"):
+        require_torch_device(FakeTorch(), "cuda")
+    assert require_torch_device(FakeTorch(), "cpu") == "cpu"
