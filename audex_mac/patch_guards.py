@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import argparse
+import sys
 from dataclasses import dataclass
 from importlib import import_module
 from inspect import signature
+from pathlib import Path
 from types import ModuleType
-from typing import Protocol
+from typing import Protocol, TextIO
+
+PATCH_LEDGER_PATH = "docs/engineering/patches.md"
 
 
 class ModuleProvider(Protocol):
@@ -44,8 +49,35 @@ class PatchGuardResult:
     update_prompt: str | None = None
 
 
+class PatchGuardError(RuntimeError):
+    """Startup refusal raised when the installed patch target is unsafe."""
+
+    def __init__(self, result: PatchGuardResult) -> None:
+        self.result = result
+        detail = result.missing_symbol or "unknown incompatibility"
+        super().__init__(
+            f"vLLM Metal patch guard failed: {detail}. "
+            f"See {PATCH_LEDGER_PATH} for reapplication guidance."
+        )
+
+
 REQUIRED_TARGETS: tuple[PatchTarget, ...] = (
     PatchTarget("vllm_metal.v1.model_adapter", ("DefaultModelAdapter",)),
+    PatchTarget(
+        "vllm_metal.v1.model_adapter",
+        ("DefaultModelAdapter", "build_multimodal_adapter"),
+        required_parameters=("self", "model", "hf_config"),
+    ),
+    PatchTarget(
+        "vllm_metal.v1.model_adapter",
+        ("DefaultModelAdapter", "should_force_text_backbone"),
+        required_parameters=("self", "hf_config"),
+    ),
+    PatchTarget(
+        "vllm_metal.v1.model_adapter",
+        ("DefaultModelAdapter", "normalize_model_config"),
+        required_parameters=("self", "model_config"),
+    ),
     PatchTarget(
         "vllm_metal.v1.model_lifecycle", ("ModelLifecycle", "_load_generation_model")
     ),
@@ -91,6 +123,36 @@ def run_patch_guards(
         warnings=tuple(warnings),
         update_prompt=update_prompt,
     )
+
+
+def enforce_patch_guards(
+    state: VllmMetalState,
+    *,
+    provider: ModuleProvider | None = None,
+    targets: tuple[PatchTarget, ...] = REQUIRED_TARGETS,
+    update_prompt_path: Path | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> PatchGuardResult:
+    """Enforce patch compatibility and persist any upstream-update prompt."""
+
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    result = run_patch_guards(state, provider=provider, targets=targets)
+    if not result.startup_allowed:
+        error = PatchGuardError(result)
+        print(str(error), file=stderr)
+        raise error
+    for warning in result.warnings:
+        print(f"Audex-Mac patch guard warning: {warning}", file=stdout)
+    if result.update_prompt is not None and update_prompt_path is not None:
+        update_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        update_prompt_path.write_text(result.update_prompt, encoding="utf-8")
+        print(
+            f"Audex-Mac patch update prompt: {update_prompt_path}",
+            file=stdout,
+        )
+    return result
 
 
 def _validate_target(target: PatchTarget, provider: ModuleProvider) -> str | None:
@@ -150,3 +212,30 @@ Update Audex-Mac's vLLM Metal monkey patches from pinned commit {old_commit} to 
 # Validation
 After changes, run the most relevant fast tests first, then a startup smoke test. Report any model-download or full-inference steps that were skipped because they are slow or require local cached weights.
 """
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Enforce Audex-Mac's pinned vLLM Metal patch contract."
+    )
+    parser.add_argument("--installed-commit", required=True)
+    parser.add_argument("--pinned-commit", required=True)
+    parser.add_argument("--upstream-head")
+    parser.add_argument("--update-prompt-path", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        enforce_patch_guards(
+            VllmMetalState(
+                installed_commit=args.installed_commit,
+                pinned_commit=args.pinned_commit,
+                upstream_head=args.upstream_head,
+            ),
+            update_prompt_path=args.update_prompt_path,
+        )
+    except PatchGuardError:
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

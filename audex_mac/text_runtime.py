@@ -6,12 +6,15 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from .checkpoints import HF_CACHE_ROOT, SnapshotCheck, verify_snapshot
 from .metal_policy import MetalRuntimePolicy, inspect_metal_runtime
 from .models import AudexModel
 from .patches.runtime import AudexPatchReport, apply_audex_runtime_patches
 from .text_benchmark import TextBenchmark, load_text_benchmark
+
+TextBackend = Literal["mlx", "vllm"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,7 @@ class TextRuntimePreflight:
     benchmark: TextBenchmark
     snapshot_check: SnapshotCheck
     dependency_checks: tuple[RuntimeDependencyCheck, ...]
+    backend: TextBackend = "vllm"
     patch_report: AudexPatchReport | None = None
     metal_policy: MetalRuntimePolicy | None = None
 
@@ -34,7 +38,10 @@ class TextRuntimePreflight:
         ready = (
             self.snapshot_check.complete
             and all(check.present for check in self.dependency_checks)
-            and (self.patch_report is None or self.patch_report.ready)
+            and (
+                self.patch_report is None
+                or _patch_report_ready(self.patch_report, self.backend)
+            )
         )
         return ready and (self.metal_policy is None or self.metal_policy.ready)
 
@@ -54,28 +61,25 @@ class TextRuntimePreflight:
                 missing.append(check.module_name)
             else:
                 missing.append(f"python module {check.module_name}")
-        if (
-            self.patch_report is not None
-            and not self.patch_report.mlx_lm_nemotron_dense
-        ):
-            missing.append("Audex MLX-LM nemotron_dense patch")
-        if (
-            self.patch_report is not None
-            and not self.patch_report.mlx_lm_nemotron_h_audex
-        ):
-            missing.append("Audex MLX-LM nemotron_h_audex patch")
-        if (
-            self.patch_report is not None
-            and not self.patch_report.vllm_metal_platform_repair
-        ):
-            missing.append("Audex vLLM Metal current_platform repair patch")
-        if self.patch_report is not None and not self.patch_report.vllm_nemotron_dense:
-            missing.append("Audex vLLM NemotronDenseForCausalLM patch")
-        if (
-            self.patch_report is not None
-            and not self.patch_report.vllm_metal_audex_adapter
-        ):
-            missing.append("Audex vLLM Metal multimodal adapter patch")
+        if self.patch_report is not None:
+            if self.backend == "mlx":
+                if not self.patch_report.mlx_lm_nemotron_dense:
+                    missing.append("Audex MLX-LM nemotron_dense patch")
+                if not self.patch_report.mlx_lm_nemotron_h_audex:
+                    missing.append("Audex MLX-LM nemotron_h_audex patch")
+            if self.backend == "vllm":
+                if not self.patch_report.transformers_local_dynamic_modules:
+                    missing.append("Audex Transformers local dynamic-modules patch")
+                if not self.patch_report.vllm_metal_platform_repair:
+                    missing.append("Audex vLLM Metal current_platform repair patch")
+                if not self.patch_report.vllm_metal_device_info_api:
+                    missing.append("Audex vLLM Metal device-info patch")
+                if not self.patch_report.vllm_metal_nonpaged_capacity:
+                    missing.append("Audex vLLM Metal nonpaged-capacity patch")
+                if not self.patch_report.vllm_nemotron_dense:
+                    missing.append("Audex vLLM NemotronDenseForCausalLM patch")
+                if not self.patch_report.vllm_metal_audex_adapter:
+                    missing.append("Audex vLLM Metal multimodal adapter patch")
         if self.metal_policy is not None and not self.metal_policy.ready:
             missing.append("Metal/MLX runtime policy")
         return tuple(missing)
@@ -86,6 +90,7 @@ def preflight_text_runtime(
     benchmark: TextBenchmark | None = None,
     cache_root: Path = HF_CACHE_ROOT,
     apply_patches: bool = True,
+    backend: TextBackend = "vllm",
 ) -> TextRuntimePreflight:
     """Check whether the selected Audex text-only benchmark path can run."""
 
@@ -96,15 +101,17 @@ def preflight_text_runtime(
         checkpoint_dirs=model.text_checkpoint_dirs,
         cache_root=cache_root,
     )
+    backend_modules = ("mlx", "mlx_lm") if backend == "mlx" else ("vllm", "vllm_metal")
     dependency_checks = tuple(
         [RuntimeDependencyCheck("python>=3.12,<3.14", _python_version_supported())]
         + [
             RuntimeDependencyCheck(name, importlib.util.find_spec(name) is not None)
-            for name in ("vllm", "vllm_metal")
+            for name in backend_modules
         ]
     )
     metal_policy = inspect_metal_runtime() if apply_patches else None
     return TextRuntimePreflight(
+        backend=backend,
         model=model,
         benchmark=benchmark,
         snapshot_check=snapshot_check,
@@ -116,3 +123,16 @@ def preflight_text_runtime(
 
 def _python_version_supported() -> bool:
     return (3, 12) <= sys.version_info[:2] < (3, 14)
+
+
+def _patch_report_ready(report: AudexPatchReport, backend: TextBackend) -> bool:
+    if backend == "mlx":
+        return report.mlx_lm_nemotron_dense and report.mlx_lm_nemotron_h_audex
+    return (
+        report.transformers_local_dynamic_modules
+        and report.vllm_metal_platform_repair
+        and report.vllm_metal_device_info_api
+        and report.vllm_metal_nonpaged_capacity
+        and report.vllm_nemotron_dense
+        and report.vllm_metal_audex_adapter
+    )

@@ -896,7 +896,16 @@ def main(argv: list[str] | None = None) -> int:
         if run.transcript:
             print("Last assistant turn:")
             print(run.transcript[-1]["assistant"])
-        return 0
+        if not run.gate.evaluated:
+            print("Text benchmark gate: not evaluated for a limited-turn diagnostic")
+            return 0
+        if run.gate.passed:
+            print("Text benchmark gate: passed")
+            return 0
+        print("Text benchmark gate: failed")
+        for failure in run.gate.failures:
+            print(f"Gate failure: {failure}")
+        return 2
 
     preflight = preflight_audio_runtime(selected_model)
     if (

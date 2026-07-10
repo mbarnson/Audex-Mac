@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from audex_mac.vendor_pins import fetch_vllm_metal_upstream_head, load_vllm_metal_pin
+
+pytestmark = pytest.mark.fast
 
 
 def test_loads_vllm_metal_pin() -> None:

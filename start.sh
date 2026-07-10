@@ -127,6 +127,26 @@ ensure_vllm_metal_audex_deps() {
   fi
 }
 
+run_vllm_metal_patch_guards() {
+  local python_bin="${VLLM_METAL_VENV_DIR}/bin/python"
+  local pinned_commit installed_commit upstream_head
+  local guard_args
+  pinned_commit="$(vllm_metal_pin_field pinned_commit)"
+  installed_commit="$(git -C "${VLLM_METAL_VENDOR_DIR}" rev-parse HEAD)"
+  upstream_head="$(git -C "${VLLM_METAL_VENDOR_DIR}" rev-parse refs/remotes/origin/main 2>/dev/null || true)"
+  guard_args=(
+    --installed-commit "${installed_commit}"
+    --pinned-commit "${pinned_commit}"
+    --update-prompt-path "${STATE_DIR}/vllm-metal-update-prompt.md"
+  )
+  if [[ -n "${upstream_head}" ]]; then
+    guard_args+=(--upstream-head "${upstream_head}")
+  fi
+  mkdir -p "${STATE_DIR}"
+  PYTHONPATH="${VLLM_METAL_PYTHONPATH}" \
+    "${python_bin}" -m audex_mac.patch_guards "${guard_args[@]}"
+}
+
 exec_vllm_metal_cli() {
   local python_bin="${VLLM_METAL_VENV_DIR}/bin/python"
   local nonpaged_kv_capacity_seqs
@@ -157,6 +177,7 @@ exec_project_cli() {
   exec "${python_bin}" -m audex_mac.cli
 }
 
+main() {
 PYTHON_BIN="$(select_python_bin)"
 
 require_metal_env VLLM_METAL_USE_MLX 1
@@ -181,6 +202,7 @@ if [[ "${REFRESH_DEPS}" == "0" && -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; the
   VLLM_METAL_PYTHONPATH="$(vllm_metal_pythonpath)"
   if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${VLLM_METAL_VENV_DIR}/bin/python" -c "import audex_mac, vllm, vllm_metal" >/dev/null 2>&1; then
     ensure_vllm_metal_audex_deps
+    run_vllm_metal_patch_guards
     PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${VLLM_METAL_VENV_DIR}/bin/python" -m audex_mac.patches.install >/dev/null
     exec_vllm_metal_cli
   fi
@@ -191,6 +213,7 @@ if [[ "${REFRESH_DEPS}" == "1" || ! -x "${VLLM_METAL_VENV_DIR}/bin/python" ]]; t
   repair_hidden_pth_files "${VLLM_METAL_VENV_DIR}"
   VLLM_METAL_PYTHONPATH="$(vllm_metal_pythonpath)"
   ensure_vllm_metal_audex_deps
+  run_vllm_metal_patch_guards
   PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${VLLM_METAL_VENV_DIR}/bin/python" -m audex_mac.patches.install >/dev/null
   exec_vllm_metal_cli
 fi
@@ -236,3 +259,8 @@ if [[ "${REFRESH_DEPS}" == "1" || "${DEPS_READY}" != "1" || "${ROOT_DIR}/pyproje
 fi
 
 exec_project_cli
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

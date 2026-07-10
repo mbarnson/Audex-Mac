@@ -8,7 +8,7 @@ Feature: Text benchmark gate
     And NVIDIA-recommended sampler settings are configured for text
     And max_tokens is at least 4096
     When the text benchmark conversation is executed
-    Then the transcript is judged reasonably coherent by GPT-5.5 Codex
+    Then the deterministic text acceptance gate passes
     And the transcript does not show excessive repetition
     And the transcript retains context across the benchmark turns
     And the run log records selected model, sampler params, timings, and transcript

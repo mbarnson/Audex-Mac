@@ -10,6 +10,8 @@ from audex_mac.text_benchmark import (
     validate_text_benchmark,
 )
 
+pytestmark = pytest.mark.fast
+
 
 def test_text_benchmark_contract_loads() -> None:
     benchmark = load_text_benchmark()

@@ -6134,3 +6134,21 @@ After changes, run the most relevant fast tests first, then a startup smoke test
 - Validation passes with `563 passed`; Black, Ruff, shell syntax, Markdown-link
   coverage, staged-diff whitespace checks, and repository hygiene scans are
   clean.
+
+## 2026-07-10 Behavioral-Test Correctness Pass
+
+- `start.sh` now executes the pinned vLLM-Metal patch guards before installing
+  Audex runtime shims; incompatible API shapes stop startup with the missing
+  symbol and this patch ledger, while upstream movement writes an update prompt.
+- Fast Gherkin scenarios now drive production routing, persistence, PCM/WAV
+  preparation, decoder buffering, and run-log paths through controlled runtime
+  seams instead of assigning the expected result into the test context.
+- CI and the pre-commit hook run `pytest -m fast`. The two model-backed Gherkin
+  scenarios are genuinely slow/local, skip when their explicit prerequisites
+  are absent, and no longer fabricate passing model or audio evidence.
+- The text benchmark now has a deterministic acceptance gate recorded in its
+  run log and returned by the CLI. A real ten-turn Audex-2B direct-MLX run on
+  Metal failed honestly because turn 9 returned the wrong final chunk; the
+  gate reported `turn 9 does not produce [[3, 1, 4], [1, 5, 9], [2]]`.
+- Black, Ruff, shell syntax, whitespace checks, and the final fast suite pass;
+  the Metal-enabled run completed with `569 passed, 2 deselected`.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ from audex_mac import cli
 from audex_mac.cli import DEFAULT_STS_BACKEND, DEFAULT_TEXT_BACKEND
 from audex_mac.speech_output import SpeechOutputSmokeResult
 from audex_mac.sts_cli import SpeechToSpeechTurnResult
+from audex_mac.text_gate import TextGateResult
 from audex_mac.text_generation import run_text_benchmark
 
 pytestmark = pytest.mark.fast
@@ -70,9 +73,117 @@ def test_start_sh_installs_audex_deps_into_vllm_metal_runtime() -> None:
     assert "ensure_vllm_metal_audex_deps" in script
 
 
+def test_start_sh_enforces_patch_guards_before_installing_runtime_shims() -> None:
+    script = Path("start.sh").read_text(encoding="utf-8")
+
+    assert "run_vllm_metal_patch_guards()" in script
+    assert script.count("\n    run_vllm_metal_patch_guards\n") == 1
+    assert script.count("\n  run_vllm_metal_patch_guards\n") == 1
+    assert script.count("-m audex_mac.patch_guards") == 1
+    assert script.count("-m audex_mac.patches.install") == 2
+    assert (
+        "run_vllm_metal_patch_guards\n"
+        '    PYTHONPATH="${VLLM_METAL_PYTHONPATH}" '
+        '"${VLLM_METAL_VENV_DIR}/bin/python" '
+        "-m audex_mac.patches.install" in script
+    )
+
+
+def test_start_sh_patch_guard_function_propagates_guard_failure(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    vendor = tmp_path / "vendor"
+    state = tmp_path / "state"
+    bin_dir = tmp_path / "bin"
+    log_path = tmp_path / "python.log"
+    (runtime / "bin").mkdir(parents=True)
+    vendor.mkdir()
+    bin_dir.mkdir()
+    runtime_python = runtime / "bin" / "python"
+    runtime_python.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_GUARD_LOG"\n'
+        'exit "${FAKE_GUARD_STATUS:-0}"\n',
+        encoding="utf-8",
+    )
+    pin_python = bin_dir / "pin-python"
+    pin_python.write_text("#!/bin/sh\necho pin\n", encoding="utf-8")
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  *'refs/remotes/origin/main'*) echo upstream ;;\n"
+        "  *'rev-parse HEAD'*) echo pin ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    for executable in (runtime_python, pin_python, fake_git):
+        executable.chmod(0o755)
+
+    start_sh = Path("start.sh").resolve()
+    command = f"""
+source {start_sh!s}
+VLLM_METAL_VENV_DIR={runtime!s}
+VLLM_METAL_VENDOR_DIR={vendor!s}
+STATE_DIR={state!s}
+PYTHON_BIN={pin_python!s}
+VLLM_METAL_PYTHONPATH={tmp_path!s}
+run_vllm_metal_patch_guards
+echo should-not-reach
+"""
+    env = os.environ | {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_GUARD_LOG": str(log_path),
+        "FAKE_GUARD_STATUS": "7",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 7
+    assert "should-not-reach" not in result.stdout
+    invocation = log_path.read_text(encoding="utf-8")
+    assert "-m audex_mac.patch_guards" in invocation
+    assert "--installed-commit pin" in invocation
+    assert "--pinned-commit pin" in invocation
+
+
 def test_text_benchmark_defaults_to_vllm_backend() -> None:
     assert DEFAULT_TEXT_BACKEND == "vllm"
     assert run_text_benchmark.__kwdefaults__["backend"] == "vllm"
+
+
+def test_text_benchmark_cli_returns_nonzero_when_acceptance_gate_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeProbe:
+        def is_cached(self, _model, readiness="speech") -> bool:
+            return True
+
+    run_log = tmp_path / "text.json"
+    run_log.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "HuggingFaceSnapshotProbe", FakeProbe)
+    monkeypatch.setattr(
+        cli,
+        "run_text_benchmark",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            run_log_path=run_log,
+            transcript=[{"assistant": "bad answer"}],
+            gate=TextGateResult(("turn 9 is incorrect",)),
+        ),
+    )
+
+    result = cli.main(["--model", "audex-2b", "--run-text-benchmark"])
+
+    assert result == 2
+    stdout = capsys.readouterr().out
+    assert "Text benchmark gate: failed" in stdout
+    assert "Gate failure: turn 9 is incorrect" in stdout
 
 
 def test_cli_context_budget_is_bounded_to_demo_limit() -> None:

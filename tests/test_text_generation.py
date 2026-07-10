@@ -9,9 +9,11 @@ from audex_mac.text_benchmark import TextBenchmark
 from audex_mac.text_generation import (
     _build_run_log,
     _contains_stop_marker,
+    _evaluate_gate,
     _sampler_config,
     _vllm_turn_record,
     clean_generation,
+    run_text_benchmark,
 )
 
 pytestmark = pytest.mark.fast
@@ -139,3 +141,38 @@ def test_run_log_records_audex_patch_report() -> None:
         "vllm_nemotron_dense": True,
         "vllm_metal_audex_adapter": True,
     }
+
+
+def test_run_text_benchmark_preflights_the_selected_backend(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    preflight = SimpleNamespace(ready=True, model_path="/tmp/model")
+
+    def fake_preflight(model, *, backend):
+        observed["model"] = model
+        observed["backend"] = backend
+        return preflight
+
+    monkeypatch.setattr(
+        "audex_mac.text_generation.preflight_text_runtime", fake_preflight
+    )
+    monkeypatch.setattr(
+        "audex_mac.text_generation._run_text_benchmark_from_preflight",
+        lambda actual, **kwargs: (actual, kwargs),
+    )
+
+    result = run_text_benchmark(SimpleNamespace(repo_id="model"), backend="mlx")
+
+    assert observed["backend"] == "mlx"
+    assert result[0] is preflight
+    assert result[1]["backend"] == "mlx"
+
+
+def test_limited_text_benchmark_does_not_claim_a_full_gate_result() -> None:
+    gate = _evaluate_gate(
+        SimpleNamespace(turns=[{} for _ in range(10)]),
+        [{"assistant": "one diagnostic turn"}],
+        limit_turns=1,
+    )
+
+    assert gate.evaluated is False
+    assert gate.passed is False

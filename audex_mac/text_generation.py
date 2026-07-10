@@ -6,24 +6,25 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from .metal_policy import inspect_metal_runtime
 from .models import AudexModel
 from .patches import apply_audex_runtime_patches
 from .speech_policy import assistant_prefix
 from .text_benchmark import TextBenchmark
-from .text_runtime import TextRuntimePreflight, preflight_text_runtime
+from .text_gate import TextGateResult, evaluate_text_benchmark
+from .text_runtime import TextBackend, TextRuntimePreflight, preflight_text_runtime
 
 STOP_MARKERS = ("<|im_end|>", "<|end_of_text|>", "<|eot_id|>")
 RUNS_DIR = Path(__file__).resolve().parents[1] / ".audex" / "runs"
-TextBackend = Literal["mlx", "vllm"]
 
 
 @dataclass(frozen=True, slots=True)
 class TextBenchmarkRun:
     run_log_path: Path
     transcript: list[dict[str, Any]]
+    gate: TextGateResult
 
 
 def run_text_benchmark(
@@ -33,7 +34,7 @@ def run_text_benchmark(
     limit_turns: int | None = None,
     backend: TextBackend = "vllm",
 ) -> TextBenchmarkRun:
-    preflight = preflight_text_runtime(model)
+    preflight = preflight_text_runtime(model, backend=backend)
     if not preflight.ready:
         raise RuntimeError(
             "Text runtime is not ready: " + ", ".join(preflight.missing_items)
@@ -165,8 +166,14 @@ def _run_text_benchmark_mlx(
         transcript=transcript,
         extra={"model_load_seconds": model_load_seconds},
     )
+    gate = _evaluate_gate(benchmark, transcript, limit_turns=limit_turns)
+    run_log["text_gate"] = _gate_log(gate)
     run_log_path = _write_run_log(run_log)
-    return TextBenchmarkRun(run_log_path=run_log_path, transcript=transcript)
+    return TextBenchmarkRun(
+        run_log_path=run_log_path,
+        transcript=transcript,
+        gate=gate,
+    )
 
 
 def _run_text_benchmark_vllm(
@@ -242,8 +249,14 @@ def _run_text_benchmark_vllm(
             "model_load_seconds": model_load_seconds,
         },
     )
+    gate = _evaluate_gate(benchmark, transcript, limit_turns=limit_turns)
+    run_log["text_gate"] = _gate_log(gate)
     run_log_path = _write_run_log(run_log)
-    return TextBenchmarkRun(run_log_path=run_log_path, transcript=transcript)
+    return TextBenchmarkRun(
+        run_log_path=run_log_path,
+        transcript=transcript,
+        gate=gate,
+    )
 
 
 def clean_generation(text: str) -> str:
@@ -345,6 +358,30 @@ def _write_run_log(run_log: dict[str, Any]) -> Path:
     run_log_path = RUNS_DIR / f"text-benchmark-{time.strftime('%Y%m%d-%H%M%S')}.json"
     run_log_path.write_text(json.dumps(run_log, indent=2) + "\n", encoding="utf-8")
     return run_log_path
+
+
+def _gate_log(gate: TextGateResult) -> dict[str, Any]:
+    return {
+        "evaluated": gate.evaluated,
+        "passed": gate.passed,
+        "failures": list(gate.failures),
+        "exact_token_parity_required": gate.exact_token_parity_required,
+        "logit_parity_required": gate.logit_parity_required,
+    }
+
+
+def _evaluate_gate(
+    benchmark: TextBenchmark,
+    transcript: list[dict[str, Any]],
+    *,
+    limit_turns: int | None,
+) -> TextGateResult:
+    if limit_turns is not None:
+        return TextGateResult(
+            ("acceptance gate requires the complete benchmark",),
+            evaluated=False,
+        )
+    return evaluate_text_benchmark(benchmark, transcript)
 
 
 def _benchmark_system_prompt(benchmark: TextBenchmark) -> str:

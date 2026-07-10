@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
 import json
+import os
+from io import StringIO
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -30,25 +33,42 @@ from audex_mac.audio_projector import (
     load_audio_projector_config,
     resolve_audio_projector_shards,
 )
+from audex_mac.audio_runtime import preflight_audio_runtime
 from audex_mac.audio_splice import validate_audio_splice_plan
-from audex_mac.bootstrap import BootstrapState, model_download_notice, plan_bootstrap
+from audex_mac.bootstrap import model_download_notice
 from audex_mac.cli import DEFAULT_STS_BACKEND
 from audex_mac.conversations import ConversationStore
-from audex_mac.interactive_input import InputKind, classify_submission
+from audex_mac.interactive_input import InputKind, TurnInput, classify_submission
 from audex_mac.model_select import select_model
-from audex_mac.models import AUDEX_2B_REPO, AUDEX_30B_NVFP4_REPO, AUDEX_30B_REPO
-from audex_mac.patch_guards import PatchTarget, VllmMetalState, run_patch_guards
-from audex_mac.personas import load_persona
-from audex_mac.speech_decoder import SpeechDecoderSmokeResult
+from audex_mac.models import (
+    AUDEX_2B_REPO,
+    AUDEX_30B_NVFP4_REPO,
+    AUDEX_30B_REPO,
+    DEFAULT_MODEL,
+)
+from audex_mac.patch_guards import (
+    PatchGuardError,
+    PatchTarget,
+    VllmMetalState,
+    enforce_patch_guards,
+    run_patch_guards,
+)
+from audex_mac.personas import Persona, load_persona
+from audex_mac.speech_decoder import (
+    AudexSpeechDecoderConfig,
+    AudexSpeechDecoderSession,
+    SpeechDecoderSmokeResult,
+)
 from audex_mac.speech_generation import SpeechTokenGenerationSmokeResult
-from audex_mac.speech_output import SpeechOutputSmokeResult
+from audex_mac.speech_output import SpeechOutputSmokeResult, write_pcm16_wav
 from audex_mac.speech_policy import (
-    ALLOWED_AUDIO_PLUMBING,
     NON_THINKING_PREFIX,
     assistant_prefix,
-    validate_no_forbidden_models,
 )
+from audex_mac.text_benchmark import load_text_benchmark
+from audex_mac.text_gate import evaluate_text_benchmark
 from audex_mac.text_generation import run_text_benchmark
+from audex_mac.text_runtime import preflight_text_runtime
 from audex_mac.vllm_diagnostics import _interpret_expected_cpu_facade
 from audex_mac.vllm_runtime import AudexVllmRuntime
 from audex_mac.vllm_sts_requests import (
@@ -95,7 +115,15 @@ class FakeProvider:
             return module
 
         if module_name.endswith("model_adapter"):
-            module.DefaultModelAdapter = type("DefaultModelAdapter", (), {})
+            module.DefaultModelAdapter = type(
+                "DefaultModelAdapter",
+                (),
+                {
+                    "build_multimodal_adapter": lambda self, model, hf_config: None,
+                    "should_force_text_backbone": lambda self, hf_config: False,
+                    "normalize_model_config": lambda self, model_config: None,
+                },
+            )
         elif module_name.endswith("model_lifecycle"):
             module.ModelLifecycle = type(
                 "ModelLifecycle",
@@ -109,6 +137,21 @@ class FakeProvider:
                 {"load_model": lambda self: None},
             )
         return module
+
+
+def imported_runtime_packages() -> set[str]:
+    source_root = Path(sts_cli.__file__).resolve().parent
+    imported_packages: set[str] = set()
+    for source_path in source_root.glob("*.py"):
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_packages.update(
+                    alias.name.split(".", 1)[0] for alias in node.names
+                )
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported_packages.add(node.module.split(".", 1)[0])
+    return imported_packages
 
 
 # Model selection
@@ -231,11 +274,24 @@ def missing_patched_symbol(ctx: dict) -> None:
 
 
 @when("start.sh runs patch guards")
-def run_guards(ctx: dict) -> None:
-    ctx["patch_result"] = run_patch_guards(
-        ctx["vllm_state"],
-        provider=FakeProvider(missing=ctx.get("missing_symbol", False)),
-    )
+def run_guards(ctx: dict, tmp_path: Path) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    update_prompt_path = tmp_path / "vllm-metal-update-prompt.md"
+    try:
+        ctx["patch_result"] = enforce_patch_guards(
+            ctx["vllm_state"],
+            provider=FakeProvider(missing=ctx.get("missing_symbol", False)),
+            update_prompt_path=update_prompt_path,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    except PatchGuardError as exc:
+        ctx["patch_result"] = exc.result
+        ctx["patch_error"] = str(exc)
+    ctx["patch_stdout"] = stdout.getvalue()
+    ctx["patch_stderr"] = stderr.getvalue()
+    ctx["update_prompt_path"] = update_prompt_path
 
 
 @then("startup continues")
@@ -250,23 +306,26 @@ def advisory_warning(ctx: dict) -> None:
 
 @then("the generated coding-agent update prompt is written to the log")
 def update_prompt_logged(ctx: dict) -> None:
-    assert ctx["patch_result"].update_prompt is not None
-    assert "docs/engineering/patches.md" in ctx["patch_result"].update_prompt
+    path = ctx["update_prompt_path"]
+    assert path.is_file()
+    assert "docs/engineering/patches.md" in path.read_text(encoding="utf-8")
 
 
 @then("startup stops before model launch")
 def startup_stops(ctx: dict) -> None:
     assert ctx["patch_result"].startup_allowed is False
+    assert ctx["patch_error"]
 
 
 @then("the error names the missing symbol")
 def error_names_symbol(ctx: dict) -> None:
-    assert ctx["patch_result"].missing_symbol
+    assert ctx["patch_result"].missing_symbol in ctx["patch_error"]
 
 
 @then("the error points to docs/engineering/patches.md")
 def error_points_to_patches(ctx: dict) -> None:
-    assert ctx["patch_result"].startup_allowed is False
+    assert "docs/engineering/patches.md" in ctx["patch_error"]
+    assert "docs/engineering/patches.md" in ctx["patch_stderr"]
 
 
 @given("vLLM Metal reports its compatibility CPU facade")
@@ -312,69 +371,59 @@ def report_treats_mlx_gpu_evidence_as_required(ctx: dict) -> None:
 # Startup
 
 
-@given("no local virtual environment exists")
+@given("no pinned vLLM Metal runtime exists")
 def no_venv(ctx: dict) -> None:
-    ctx["bootstrap_state"] = BootstrapState(
-        venv_exists=False,
-        dependency_state_matches=False,
-        model_cached=True,
-    )
+    ctx["runtime_present"] = False
 
 
-@given("the local virtual environment matches the pinned dependency state")
+@given("the pinned vLLM Metal runtime imports successfully")
 def valid_bootstrap_state(ctx: dict) -> None:
-    ctx["bootstrap_state"] = BootstrapState(
-        venv_exists=True,
-        dependency_state_matches=True,
-        model_cached=True,
-    )
+    ctx["runtime_present"] = True
 
 
 @given("no supported Audex model is cached")
 def no_model_cached(ctx: dict) -> None:
-    previous = ctx.get(
-        "bootstrap_state",
-        BootstrapState(
-            venv_exists=True,
-            dependency_state_matches=True,
-            model_cached=True,
-        ),
-    )
-    ctx["bootstrap_state"] = BootstrapState(
-        venv_exists=previous.venv_exists,
-        dependency_state_matches=previous.dependency_state_matches,
-        model_cached=False,
-    )
+    ctx["model_cached"] = False
 
 
 @when("the user runs ./start.sh")
 def user_runs_start(ctx: dict) -> None:
-    ctx["bootstrap_plan"] = plan_bootstrap(ctx["bootstrap_state"])
+    script_path = Path(__file__).resolve().parents[1] / "start.sh"
+    ctx["start_script"] = script_path.read_text(encoding="utf-8")
+    import subprocess
+
+    subprocess.run(["bash", "-n", str(script_path)], check=True)
 
 
-@then("start.sh creates a local virtual environment")
+@then("start.sh clones and checks out the pinned vLLM Metal commit")
 def creates_venv(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].create_venv is True
+    source = ctx["start_script"]
+    assert 'git clone "${repo}" "${VLLM_METAL_VENDOR_DIR}"' in source
+    assert 'checkout --detach "${pinned_commit}"' in source
 
 
-@then("installs huggingface_hub")
+@then("installs Audex-Mac into that runtime")
 def installs_hf(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].install_huggingface_hub is True
+    assert 'pip install -e "${ROOT_DIR}"' in ctx["start_script"]
 
 
-@then("installs pinned project dependencies")
+@then("enforces the runtime patch guards")
 def installs_deps(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].install_pinned_dependencies is True
+    source = ctx["start_script"]
+    assert "run_vllm_metal_patch_guards" in source
+    assert "-m audex_mac.patch_guards" in source
 
 
 @then("start.sh does not reinstall dependencies by default")
 def no_reinstall(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].install_pinned_dependencies is False
+    source = ctx["start_script"]
+    assert 'if [[ "${REFRESH_DEPS}" == "0"' in source
+    assert "import audex_mac, vllm, vllm_metal" in source
 
 
 @then("proceeds to model selection")
 def proceeds_to_model_selection(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].proceed_to_model_selection is True
+    assert "exec_vllm_metal_cli" in ctx["start_script"]
 
 
 @then("start.sh explains the selected model size and NVIDIA license")
@@ -387,7 +436,9 @@ def explains_download(ctx: dict) -> None:
 
 @then("asks for confirmation before downloading")
 def asks_confirmation(ctx: dict) -> None:
-    assert ctx["bootstrap_plan"].prompt_for_model_download is True
+    cli_source = Path(sts_cli.__file__).with_name("cli.py").read_text(encoding="utf-8")
+    assert 'input("Download now? [y/N] ")' in cli_source
+    assert "if not approved" in cli_source
 
 
 # Licensing
@@ -436,69 +487,88 @@ def prompt_not_mit_weights(ctx: dict) -> None:
 
 
 @given("the CLI is running in speech-to-speech mode")
-def cli_sts_mode(ctx: dict) -> None:
+def cli_sts_mode(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     ctx["loaded_models"] = ["audex"]
+    interactive_audex_cli_ready(ctx, monkeypatch, tmp_path)
+    ctx["imported_packages"] = imported_runtime_packages()
 
 
 @when("the user records an utterance with push-to-talk")
-def record_ptt(ctx: dict) -> None:
-    ctx["input_path"] = "audex_audio"
+def record_ptt(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeRecording:
+        def stop(self):
+            return [0.0, 0.1]
+
+    inputs = iter([TurnInput(InputKind.RECORD), TurnInput(InputKind.QUIT)])
+    monkeypatch.setattr(sts_cli, "read_turn_input", lambda: next(inputs))
+    monkeypatch.setattr(sts_cli, "_start_recording", FakeRecording)
+    monkeypatch.setattr("builtins.input", lambda: "")
+    ctx["turn_result"] = sts_cli.run_interactive_ptt(
+        full_model_path=Path("/model"),
+        decoder_path=Path("/decoder"),
+        output_dir=ctx["interactive_output_dir"],
+        play=True,
+    )
 
 
 @then("the input audio is passed to Audex audio input processing")
 def input_to_audex(ctx: dict) -> None:
-    assert ctx["input_path"] == "audex_audio"
+    assert ctx["session_events"][0][0] == "wav"
+    assert ctx["turn_result"].input_wav_path.is_file()
 
 
 @then("no Whisper model is loaded")
 def no_whisper(ctx: dict) -> None:
-    validate_no_forbidden_models(ctx["loaded_models"])
+    assert not {"whisper", "pywhispercpp"} & ctx.get(
+        "imported_packages", imported_runtime_packages()
+    )
 
 
 @then("no Kokoro model is loaded")
 def no_kokoro(ctx: dict) -> None:
-    validate_no_forbidden_models(ctx["loaded_models"])
+    assert "kokoro" not in ctx.get("imported_packages", imported_runtime_packages())
 
 
 @then("no Silero VAD model is loaded")
 def no_silero(ctx: dict) -> None:
-    validate_no_forbidden_models(ctx["loaded_models"])
+    assert "silero" not in ctx.get("imported_packages", imported_runtime_packages())
 
 
 @then("the spoken response is decoded with the Audex causal speech decoder")
 def audex_decoder(ctx: dict) -> None:
-    ctx["decoder"] = "audex_causal_speech_decoder"
-    assert ctx["decoder"] == "audex_causal_speech_decoder"
+    source = Path(sts_cli.__file__).read_text(encoding="utf-8")
+    assert "AudexSpeechDecoderSession" in source
+    assert "generate_speech_output_streaming" in source
 
 
-@given("the CLI captured audio from the microphone")
+@given("the CLI captured stereo PCM from the microphone")
 def captured_audio(ctx: dict) -> None:
-    ctx["audio"] = "pcm"
+    ctx["audio"] = [(0.5, -0.5), (1.0, 0.0)]
 
 
 @when("Audex-Mac prepares the audio for Audex")
 def prepare_audio(ctx: dict) -> None:
-    ctx["audio_ops"] = {"resample", "normalize", "codec_convert"}
+    ctx["prepared_audio"] = prepare_audex_pcm_clips(ctx["audio"])
 
 
-@then("it may resample PCM")
-def may_resample(ctx: dict) -> None:
-    assert "resample" in ALLOWED_AUDIO_PLUMBING
-
-
-@then("it may normalize audio samples")
+@then("it downmixes and normalizes the PCM samples")
 def may_normalize(ctx: dict) -> None:
-    assert "normalize" in ALLOWED_AUDIO_PLUMBING
+    assert ctx["prepared_audio"].clips[0][:2] == pytest.approx((0.0, 0.5))
 
 
-@then("it may use codec tools for deterministic conversion")
+@then("it pads the utterance to an Audex input clip")
 def may_codec(ctx: dict) -> None:
-    assert "codec_convert" in ALLOWED_AUDIO_PLUMBING
+    assert len(ctx["prepared_audio"].clips[0]) == 480_000
 
 
 @then("it must not infer speech text with a separate model")
 def no_separate_inference(ctx: dict) -> None:
-    validate_no_forbidden_models(ctx.get("loaded_models", ["audex"]))
+    imports = imported_runtime_packages()
+    assert not {"whisper", "pywhispercpp", "kokoro", "silero"} & imports
 
 
 # Speech CLI non-thinking
@@ -520,9 +590,48 @@ def prepends_non_thinking(ctx: dict) -> None:
 
 
 @then("it records thinking_enabled=false in the run log")
-def records_thinking_false(ctx: dict) -> None:
-    ctx["run_log"] = {"thinking_enabled": ctx["thinking_enabled"]}
-    assert ctx["run_log"]["thinking_enabled"] is False
+def records_thinking_false(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    input_wav = tmp_path / "input.wav"
+    output_wav = tmp_path / "output.wav"
+    speech_log = tmp_path / "speech.json"
+    write_pcm16_wav(input_wav, [0.0], sample_rate=16_000)
+    write_pcm16_wav(output_wav, [0.0] * 320, sample_rate=16_000)
+    speech_log.write_text("{}\n", encoding="utf-8")
+    speech = SpeechOutputSmokeResult(
+        backend="mlx",
+        device="gpu",
+        prompt_tokens=1,
+        generated_token_ids=(1,),
+        generated_codec_frames=(1,),
+        reached_end_token=True,
+        hit_max_tokens=False,
+        waveform_shape=(320,),
+        sample_rate=16_000,
+        hop_length=320,
+        finite=True,
+        peak_abs=0.0,
+        wav_path=output_wav,
+        run_log_path=speech_log,
+    )
+    monkeypatch.setattr(sts_cli, "transcribe_wav_with_audex", lambda **_kwargs: "Hi")
+    monkeypatch.setattr(
+        sts_cli, "generate_audex_text_response", lambda **_kwargs: "Hello"
+    )
+    monkeypatch.setattr(sts_cli, "run_speech_output_smoke", lambda **_kwargs: speech)
+    result = sts_cli.run_fixture_turn(
+        full_model_path=tmp_path / "model",
+        decoder_path=tmp_path / "decoder",
+        input_wav_path=input_wav,
+        output_dir=tmp_path,
+        play=False,
+        thinking_enabled=ctx["thinking_enabled"],
+    )
+    run_log = json.loads(result.run_log_path.read_text(encoding="utf-8"))
+    assert run_log["thinking_enabled"] is False
 
 
 @given("one 16 kHz utterance shorter than 30 seconds")
@@ -959,19 +1068,68 @@ def eight_speech_codec_frames(ctx: dict) -> None:
 
 
 @when("Audex-Mac validates speech decoder output readiness")
-def validate_speech_decoder_output_readiness(ctx: dict) -> None:
+def validate_speech_decoder_output_readiness(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     frame_count = ctx["speech_codec_frame_count"]
+    config = AudexSpeechDecoderConfig(
+        hidden_dim=2048,
+        depth=1,
+        heads=32,
+        pos_meb_dim=64,
+        hop_length=320,
+        vq_dim=2048,
+        lookahead_steps=0,
+        sample_rate=16_000,
+        codebook_levels=(4, 4, 4, 4, 4, 4, 4, 4),
+        codebook_size=65_536,
+        token_embed_dim=8,
+    )
+
+    class FakeEmbedding:
+        dtype = "float32"
+
+        def __init__(self, frames) -> None:
+            self.frames = tuple(frames)
+            self.shape = (1, len(self.frames), 2048)
+
+    class FakeWaveform:
+        def __init__(self, samples: int) -> None:
+            self.shape = (samples,)
+
+    monkeypatch.setattr(
+        "audex_mac.speech_decoder.embed_speech_token_frames_mlx",
+        lambda frames, _weights, _config: FakeEmbedding(frames),
+    )
+
+    def fake_decode(embedding, _weights, _config, cache, **_kwargs):
+        cache.advance(len(embedding.frames))
+        return FakeWaveform(len(embedding.frames) * config.hop_length)
+
+    monkeypatch.setattr(
+        "audex_mac.speech_decoder.decode_speech_embeddings_cached_mlx",
+        fake_decode,
+    )
+    session = AudexSpeechDecoderSession(
+        weights={},
+        config=config,
+        chunk_frames=frame_count,
+    )
+    decoded = session.push(tuple((index,) for index in range(frame_count)))
+    assert len(decoded) == 1
+    sample_rate, waveform = decoded[0]
     ctx["speech_decoder_result"] = SpeechDecoderSmokeResult(
         backend="mlx",
         device="Device(gpu, 0)",
         frame_count=frame_count,
         input_shape=(frame_count, 1),
         vq_embedding_shape=(1, frame_count, 2048),
-        waveform_shape=(frame_count * 320,),
+        waveform_shape=waveform.shape,
         waveform_dtype="mlx.core.float32",
-        sample_rate=16_000,
-        hop_length=320,
-        lookahead_steps=4,
+        sample_rate=sample_rate,
+        hop_length=config.hop_length,
+        lookahead_steps=config.lookahead_steps,
         finite=True,
         peak_abs=0.05,
     )
@@ -1000,8 +1158,15 @@ def generated_audex_speech_codec_frames(ctx: dict) -> None:
 def decoded_audex_waveform(ctx: dict, tmp_path: Path) -> None:
     wav_path = tmp_path / "speech-output.wav"
     run_log_path = tmp_path / "speech-output.json"
-    wav_path.write_bytes(b"RIFF")
-    run_log_path.write_text("{}\n", encoding="utf-8")
+    write_pcm16_wav(
+        wav_path,
+        [0.0] * (len(ctx["generated_codec_frames"]) * 320),
+        sample_rate=16_000,
+    )
+    run_log_path.write_text(
+        json.dumps({"generated_codec_frames": ctx["generated_codec_frames"]}) + "\n",
+        encoding="utf-8",
+    )
     ctx["speech_artifacts"] = (wav_path, run_log_path)
 
 
@@ -1056,33 +1221,95 @@ class FakeFeatures:
 
 
 @given("the interactive Audex CLI is ready for a user turn")
-def interactive_audex_cli_ready(ctx: dict) -> None:
-    ctx["asr_called"] = False
-    ctx["spoken_response"] = False
+def interactive_audex_cli_ready(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx["session_instances"] = []
+    ctx["session_events"] = []
+
+    class FakeSession:
+        def __init__(self, **_kwargs) -> None:
+            self.messages: list[dict[str, str]] = []
+            ctx["session_instances"].append(self)
+
+        @property
+        def stats(self):
+            return sts_cli.AudexSpeechToSpeechSessionStats(0.1, 0.1, 0.1, 0.1, 0)
+
+        def speak_startup_greeting(self, **_kwargs) -> None:
+            return None
+
+        def _result(self, transcript: str, *, input_wav_path: Path | None):
+            output_wav = tmp_path / "answer.wav"
+            run_log = tmp_path / "turn.json"
+            output_wav.write_bytes(b"RIFF")
+            run_log.write_text("{}\n", encoding="utf-8")
+            self.messages.extend(
+                [
+                    {"role": "user", "content": transcript},
+                    {"role": "assistant", "content": "Spoken answer."},
+                ]
+            )
+            return sts_cli.SpeechToSpeechTurnResult(
+                transcript=transcript,
+                response_text="Spoken answer.",
+                input_wav_path=input_wav_path,
+                output_wav_path=output_wav,
+                run_log_path=run_log,
+                played=True,
+            )
+
+        def run_turn_from_text(self, *, user_text: str, play: bool):
+            ctx["session_events"].append(("text", user_text, play, id(self)))
+            return self._result(user_text, input_wav_path=None)
+
+        def run_turn_from_wav(self, *, input_wav_path: Path, play: bool):
+            ctx["session_events"].append(("wav", input_wav_path, play, id(self)))
+            return self._result("recorded speech", input_wav_path=input_wav_path)
+
+    monkeypatch.setattr(sts_cli, "AudexSpeechToSpeechSession", FakeSession)
+    monkeypatch.setattr(
+        sts_cli,
+        "_start_recording",
+        lambda: pytest.fail("typed input must not start recording"),
+    )
+    ctx["interactive_output_dir"] = tmp_path
 
 
 @when("the user types a multiline message and presses Enter")
-def types_multiline_message(ctx: dict) -> None:
-    turn_input = classify_submission("First line.\n\nSecond line.")
-    ctx["turn_input"] = turn_input
-    ctx["model_input"] = turn_input.text
-    ctx["spoken_response"] = True
+def types_multiline_message(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs = iter(
+        [
+            TurnInput(InputKind.TEXT, "First line.\n\nSecond line."),
+            TurnInput(InputKind.QUIT),
+        ]
+    )
+    monkeypatch.setattr(sts_cli, "read_turn_input", lambda: next(inputs))
+    ctx["turn_result"] = sts_cli.run_interactive_ptt(
+        full_model_path=Path("/model"),
+        decoder_path=Path("/decoder"),
+        output_dir=ctx["interactive_output_dir"],
+        play=True,
+    )
 
 
 @then("ASR is skipped")
 def asr_is_skipped(ctx: dict) -> None:
-    assert ctx["asr_called"] is False
+    assert [event[0] for event in ctx["session_events"]] == ["text"]
 
 
 @then("the typed message is sent directly to the conversation model")
 def typed_message_sent_directly(ctx: dict) -> None:
-    assert ctx["turn_input"].kind is InputKind.TEXT
-    assert ctx["model_input"] == "First line.\n\nSecond line."
+    assert ctx["session_events"][0][1] == "First line.\n\nSecond line."
+    assert ctx["turn_result"].transcript == "First line.\n\nSecond line."
 
 
 @then("Audex generates and plays a spoken response")
 def typed_turn_plays_spoken_response(ctx: dict) -> None:
-    assert ctx["spoken_response"] is True
+    assert ctx["turn_result"].played is True
+    assert ctx["turn_result"].output_wav_path.is_file()
 
 
 @when("the user presses Enter without typing text")
@@ -1110,50 +1337,86 @@ def audex_speech_decoder_available(ctx: dict) -> None:
 
 
 @when("the user starts the CLI with ./start.sh")
-def starts_sts_cli(ctx: dict) -> None:
+def starts_sts_cli(ctx: dict, tmp_path: Path) -> None:
     assert ctx["model_cached"] is True
     assert ctx["decoder_available"] is True
-    ctx["cli_started"] = True
-    ctx["run_log"] = {
-        "selected_model": ctx["selected_model"],
-        "timings": {"elapsed_seconds": 1.0},
-    }
+    fixture = os.environ.get("AUDEX_BDD_INPUT_WAV")
+    if not fixture:
+        pytest.skip("set AUDEX_BDD_INPUT_WAV to run the local speech behavior")
+    preflight = preflight_audio_runtime(DEFAULT_MODEL)
+    if (
+        not preflight.ready
+        or preflight.model_path is None
+        or preflight.decoder_path is None
+    ):
+        pytest.skip(
+            "local audio runtime unavailable: " + ", ".join(preflight.missing_items)
+        )
+    ctx["input_fixture"] = Path(fixture)
+    assert ctx["input_fixture"].is_file()
+    ctx["audio_preflight"] = preflight
+    ctx["slow_output_dir"] = tmp_path
 
 
 @when("records one push-to-talk utterance")
 def records_one_push_to_talk_utterance(ctx: dict) -> None:
-    assert ctx["cli_started"] is True
-    ctx["loaded_models"] = ["audex"]
-    ctx["input_path"] = "audex_audio"
-    ctx["spoken_response"] = "audex_waveform"
-    ctx["played"] = True
+    preflight = ctx["audio_preflight"]
+    ctx["slow_turn"] = sts_cli.run_fixture_turn(
+        full_model_path=preflight.model_path,
+        decoder_path=preflight.decoder_path,
+        input_wav_path=ctx["input_fixture"],
+        selected_model_repo=ctx["selected_model"],
+        output_dir=ctx["slow_output_dir"],
+        play=True,
+    )
+    ctx["run_log"] = json.loads(
+        ctx["slow_turn"].run_log_path.read_text(encoding="utf-8")
+    )
 
 
 @when("the user completes multiple push-to-talk turns")
-def completes_multiple_push_to_talk_turns(ctx: dict) -> None:
-    ctx["session_id"] = "audex-full-model-session"
-    ctx["turn_sessions"] = [ctx["session_id"], ctx["session_id"]]
-    ctx["conversation_history"] = [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "Hi."},
-        {"role": "user", "content": "continue"},
-    ]
+def completes_multiple_push_to_talk_turns(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRecording:
+        def stop(self):
+            return [0.0, 0.1]
+
+    inputs = iter(
+        [
+            TurnInput(InputKind.RECORD),
+            TurnInput(InputKind.RECORD),
+            TurnInput(InputKind.QUIT),
+        ]
+    )
+    monkeypatch.setattr(sts_cli, "read_turn_input", lambda: next(inputs))
+    monkeypatch.setattr(sts_cli, "_start_recording", FakeRecording)
+    monkeypatch.setattr("builtins.input", lambda: "")
+    sts_cli.run_interactive_ptt(
+        full_model_path=Path("/model"),
+        decoder_path=Path("/decoder"),
+        output_dir=ctx["interactive_output_dir"],
+        play=True,
+    )
+    ctx["turn_sessions"] = [event[3] for event in ctx["session_events"]]
+    ctx["conversation_history"] = ctx["session_instances"][0].messages
 
 
 @then("Audex receives the user's speech as native audio input")
 def audex_receives_native_audio(ctx: dict) -> None:
-    assert ctx["input_path"] == "audex_audio"
-    validate_no_forbidden_models(ctx["loaded_models"])
+    assert ctx["slow_turn"].input_wav_path == ctx["input_fixture"]
 
 
 @then("Audex generates a spoken response")
 def audex_generates_spoken_response(ctx: dict) -> None:
-    assert ctx["spoken_response"] == "audex_waveform"
+    assert ctx["slow_turn"].output_wav_path.is_file()
+    assert ctx["slow_turn"].response_text
 
 
 @then("the response is played locally on the Mac")
 def response_played_locally(ctx: dict) -> None:
-    assert ctx["played"] is True
+    assert ctx["slow_turn"].played is True
 
 
 @then("the run log records the selected model and timing metrics")
@@ -1165,12 +1428,12 @@ def sts_run_log_records_model_and_timings(ctx: dict) -> None:
 @then("the same Audex full model session handles every turn")
 def same_audex_full_model_session_handles_every_turn(ctx: dict) -> None:
     assert len(set(ctx["turn_sessions"])) == 1
-    validate_no_forbidden_models(["audex"])
+    assert len(ctx["session_instances"]) == 1
 
 
 @then("the conversation history is retained until the context limit")
 def conversation_history_retained_until_context_limit(ctx: dict) -> None:
-    assert len(ctx["conversation_history"]) == 3
+    assert len(ctx["conversation_history"]) == 4
 
 
 @given("a previous speech-to-speech conversation exists")
@@ -1294,19 +1557,78 @@ def resumes_previous_by_id(ctx: dict) -> None:
 @when("Audex-Mac saves the conversation state")
 def audex_saves_conversation_state(ctx: dict) -> None:
     conversation = ctx["previous_conversation"]
-    kv_path = conversation.root / f"{conversation.conversation_id}.kv.safetensors"
-    kv_path.write_bytes(b"mlx safetensors")
-    ctx["kv_path"] = kv_path
-    ctx["kv_metadata"] = {
-        "conversation_id": conversation.conversation_id,
-        "prompt_token_hash": "abc123",
-    }
+    session = object.__new__(sts_cli.AudexSpeechToSpeechSession)
+    session.conversation = conversation
+    session.conversation_store = ctx["conversation_store"]
+    session.messages = list(conversation.messages) + [
+        {"role": "user", "content": "continue"},
+        {"role": "assistant", "content": "Continuing."},
+    ]
+    session.enable_kv_cache = True
+    session.selected_model_repo = AUDEX_2B_REPO
+    session.thinking_enabled = False
+    session.persona = Persona(
+        persona_id="assistant",
+        path=conversation.root / "assistant.md",
+        metadata={},
+        prompt="System prompt.",
+    )
+    saved: dict[str, object] = {}
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, **_kwargs) -> str:
+            return "\n".join(
+                f"{message['role']}:{message['content']}" for message in messages
+            )
+
+        def encode(self, text: str) -> list[int]:
+            return [ord(char) for char in text]
+
+    class FakeArray(list):
+        def __getitem__(self, _item):
+            return self
+
+    class FakeMx:
+        int32 = "int32"
+
+        def array(self, values, dtype=None):
+            return FakeArray(values)
+
+        def eval(self, _value) -> None:
+            return None
+
+    class FakeCache:
+        state = "state"
+
+    class FakeCacheModule:
+        def make_prompt_cache(self, _model):
+            return [FakeCache()]
+
+        def save_prompt_cache(self, path, _cache, metadata):
+            Path(path).write_bytes(b"mlx safetensors")
+            saved["path"] = Path(path)
+            saved["metadata"] = metadata
+
+    class FakeModel:
+        def __call__(self, _tokens, cache):
+            assert cache
+            saved["model_called"] = True
+
+    session.tokenizer = FakeTokenizer()
+    session.mx = FakeMx()
+    session.cache_module = FakeCacheModule()
+    session.model = FakeModel()
+    session._persist_conversation()
+    ctx["kv_path"] = saved["path"]
+    ctx["kv_metadata"] = saved["metadata"]
+    ctx["kv_model_called"] = saved["model_called"]
 
 
 @then("the conversation has a binary safetensors KV cache")
 def conversation_has_binary_safetensors_kv_cache(ctx: dict) -> None:
     assert ctx["kv_path"].suffix == ".safetensors"
     assert ctx["kv_path"].is_file()
+    assert ctx["kv_model_called"] is True
 
 
 @then("the KV cache is matched to the conversation token hash")
@@ -1428,50 +1750,43 @@ def execute_text_benchmark_contract(ctx: dict) -> None:
     assert ctx["selected_model"] == "nvidia/Nemotron-Labs-Audex-2B"
     assert ctx["text_sampler"] == {"temperature": 1.0, "top_p": 0.95}
     assert ctx["max_tokens"] >= 4096
-    ctx["text_benchmark_run"] = {
-        "coherent": True,
-        "excessive_repetition": False,
-        "context_retained": True,
-        "run_log": {
-            "selected_model": ctx["selected_model"],
-            "sampler": ctx["text_sampler"],
-            "backend": "vllm",
-            "elapsed_seconds": 80.416,
-            "metal_runtime": {"mlx_default_device": "Device(gpu, 0)"},
-            "audex_patches": {
-                "vllm_metal_platform_repair": True,
-                "vllm_metal_audex_adapter": True,
-            },
-            "transcript": [
-                {
-                    "turn": 1,
-                    "assistant": "coherent output",
-                    "generation_tokens": 512,
-                    "generation_tps": 42.0,
-                }
-            ],
-        },
-    }
+    backend = os.environ.get("AUDEX_TEXT_BENCHMARK_BACKEND", "vllm")
+    preflight = preflight_text_runtime(DEFAULT_MODEL, backend=backend)
+    if not preflight.ready:
+        pytest.skip(
+            "local text runtime unavailable: " + ", ".join(preflight.missing_items)
+        )
+    run = run_text_benchmark(DEFAULT_MODEL, backend=backend)
+    ctx["text_benchmark_run"] = run
+    ctx["text_benchmark_log"] = json.loads(run.run_log_path.read_text(encoding="utf-8"))
 
 
-@then("the transcript is judged reasonably coherent by GPT-5.5 Codex")
+@then("the deterministic text acceptance gate passes")
 def transcript_reasonably_coherent(ctx: dict) -> None:
-    assert ctx["text_benchmark_run"]["coherent"] is True
+    assert ctx["text_benchmark_run"].gate.passed, ctx[
+        "text_benchmark_run"
+    ].gate.failures
 
 
 @then("the transcript does not show excessive repetition")
 def transcript_no_excessive_repetition(ctx: dict) -> None:
-    assert ctx["text_benchmark_run"]["excessive_repetition"] is False
+    failures = ctx["text_benchmark_run"].gate.failures
+    assert not any("repeated assistant answer" in failure for failure in failures)
 
 
 @then("the transcript retains context across the benchmark turns")
 def transcript_retains_context(ctx: dict) -> None:
-    assert ctx["text_benchmark_run"]["context_retained"] is True
+    failures = ctx["text_benchmark_run"].gate.failures
+    context_failures = ("accent handling", "chunked", "turn 9", "final summary")
+    assert not any(
+        any(fragment in failure for fragment in context_failures)
+        for failure in failures
+    )
 
 
 @then("the run log records selected model, sampler params, timings, and transcript")
 def text_run_log_records_required_fields(ctx: dict) -> None:
-    run_log = ctx["text_benchmark_run"]["run_log"]
+    run_log = ctx["text_benchmark_log"]
     assert run_log["selected_model"] == ctx["selected_model"]
     assert run_log["sampler"] == ctx["text_sampler"]
     assert run_log["elapsed_seconds"] > 0
@@ -1480,7 +1795,7 @@ def text_run_log_records_required_fields(ctx: dict) -> None:
 
 @then("the vLLM run log records token throughput and Audex patch evidence")
 def vllm_run_log_records_runtime_evidence(ctx: dict) -> None:
-    run_log = ctx["text_benchmark_run"]["run_log"]
+    run_log = ctx["text_benchmark_log"]
     first_turn = run_log["transcript"][0]
     assert run_log["backend"] == "vllm"
     assert run_log["metal_runtime"]["mlx_default_device"] == "Device(gpu, 0)"
@@ -1492,11 +1807,39 @@ def vllm_run_log_records_runtime_evidence(ctx: dict) -> None:
 
 @given("the text benchmark has completed")
 def text_benchmark_completed(ctx: dict) -> None:
-    ctx["text_gate"] = {
-        "exact_token_parity": False,
-        "logit_parity": False,
-        "coherent_output": True,
-    }
+    answers = [f"answer {index}" for index in range(1, 11)]
+    answers[0] += "\n```python\ndef is_palindrome(s):\n    return True\n```"
+    answers[2] += " unicodedata.normalize('NFKD', text)"
+    answers[4] += "\n```python\ndef chunked(values, size):\n    yield values\n```"
+    answers[5] += " raise ValueError when size <= 0"
+    answers[6] += """
+```python
+import itertools
+import unicodedata
+
+def chunked(values, size):
+    if size <= 0:
+        raise ValueError("size")
+    iterator = iter(values)
+    while chunk := list(itertools.islice(iterator, size)):
+        yield chunk
+
+def is_palindrome(text):
+    cleaned = "".join(
+        char.lower()
+        for char in unicodedata.normalize("NFKD", text)
+        if char.isalnum()
+    )
+    return cleaned == cleaned[::-1]
+```
+"""
+    answers[8] += " [[3, 1, 4], [1, 5, 9], [2]]"
+    answers[9] += " chunked is_palindrome O(N) ValueError"
+    transcript = [
+        {"turn": index, "assistant": answer}
+        for index, answer in enumerate(answers, start=1)
+    ]
+    ctx["text_gate"] = evaluate_text_benchmark(load_text_benchmark(), transcript)
 
 
 @when("Audex-Mac evaluates the text gate")
@@ -1506,17 +1849,17 @@ def evaluate_text_gate(ctx: dict) -> None:
 
 @then("it does not require exact token parity")
 def no_token_parity(ctx: dict) -> None:
-    assert ctx["text_gate"]["exact_token_parity"] is False
+    assert ctx["text_gate"].exact_token_parity_required is False
 
 
 @then("it does not require logit parity")
 def no_logit_parity(ctx: dict) -> None:
-    assert ctx["text_gate"]["logit_parity"] is False
+    assert ctx["text_gate"].logit_parity_required is False
 
 
 @then("it does require coherent viable output")
 def coherent_required(ctx: dict) -> None:
-    assert ctx["text_gate"]["coherent_output"] is True
+    assert ctx["text_gate"].passed is True
 
 
 @given("the text benchmark CLI is configured with default options")
@@ -1571,6 +1914,7 @@ def direct_mlx_sts_requires_explicit_backend(ctx: dict) -> None:
     assert ctx["resolved_sts_backend"] == "mlx"
 
 
+@pytest.mark.fast
 def test_patch_guard_signature_check_detects_missing_parameter() -> None:
     class Provider:
         def import_module(self, module_name: str) -> ModuleType:

@@ -61,3 +61,22 @@ def test_text_preflight_reports_missing_checkpoint_shards(tmp_path: Path) -> Non
 
     assert result.ready is False
     assert "checkpoint_folder_textonly/model.safetensors" in result.missing_items
+
+
+def test_mlx_text_preflight_does_not_require_vllm_dependencies(
+    tmp_path: Path,
+) -> None:
+    make_snapshot(tmp_path)
+
+    result = preflight_text_runtime(
+        DEFAULT_MODEL,
+        benchmark(),
+        cache_root=tmp_path,
+        apply_patches=False,
+        backend="mlx",
+    )
+
+    dependency_names = {check.module_name for check in result.dependency_checks}
+    assert dependency_names == {"python>=3.12,<3.14", "mlx", "mlx_lm"}
+    assert "python module vllm" not in result.missing_items
+    assert "python module vllm_metal" not in result.missing_items

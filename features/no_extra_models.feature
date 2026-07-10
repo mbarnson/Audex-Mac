@@ -13,11 +13,9 @@ Feature: No extra semantic models
     And the spoken response is decoded with the Audex causal speech decoder
 
   @fast
-  Scenario: Deterministic audio plumbing is allowed
-    Given the CLI captured audio from the microphone
+  Scenario: PCM preparation is deterministic
+    Given the CLI captured stereo PCM from the microphone
     When Audex-Mac prepares the audio for Audex
-    Then it may resample PCM
-    And it may normalize audio samples
-    And it may use codec tools for deterministic conversion
+    Then it downmixes and normalizes the PCM samples
+    And it pads the utterance to an Audex input clip
     But it must not infer speech text with a separate model
-

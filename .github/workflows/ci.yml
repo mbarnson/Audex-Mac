@@ -19,4 +19,4 @@ jobs:
       - name: Lint
         run: PYTHON=python scripts/lint.sh
       - name: Fast tests
-        run: python -m pytest
+        run: python -m pytest -m fast

@@ -8,6 +8,6 @@ echo "Audex-Mac pre-commit: lint"
 scripts/lint.sh
 
 echo "Audex-Mac pre-commit: fast tests"
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest -m fast
 
 echo "Audex-Mac pre-commit: ok"
