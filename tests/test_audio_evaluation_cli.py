@@ -128,6 +128,109 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     assert "hf_should_not_be_recorded" not in json.dumps(environment)
 
 
+def test_audio_evaluation_cli_can_explicitly_skip_esc50(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _smoke_rows()
+    fetched_repos: list[str] = []
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        fetched_repos.append(pin.repo_id)
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--materialize-only",
+            "--skip-esc50",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "skip-esc",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    assert "ashraq/esc50" not in fetched_repos
+    run_dir = tmp_path / "runs" / "skip-esc"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["case_count"] == 24
+    assert manifest["omitted_datasets"] == [
+        {"reason": "explicit --skip-esc50", "repo_id": "ashraq/esc50"}
+    ]
+
+
+def test_audio_evaluation_cli_can_explicitly_skip_optional_song_describer(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _smoke_rows()
+    fetched_repos: list[str] = []
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        del client
+        fetched_repos.append(pin.repo_id)
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--materialize-only",
+            "--skip-song-describer",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "skip-song",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    assert "renumics/song-describer-dataset" not in fetched_repos
+    run_dir = tmp_path / "runs" / "skip-song"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["case_count"] == 28
+    assert manifest["omitted_datasets"] == [
+        {
+            "reason": "explicit --skip-song-describer",
+            "repo_id": "renumics/song-describer-dataset",
+        }
+    ]
+
+
 def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_oracles(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

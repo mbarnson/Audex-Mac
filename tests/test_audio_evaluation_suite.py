@@ -145,3 +145,35 @@ def test_smoke_suite_keeps_song_describer_optional_when_rows_are_absent() -> Non
 
     assert len(cases) == 28
     assert not any(case.dataset_id == SONG_DESCRIBER_PIN.repo_id for case in cases)
+
+
+@pytest.mark.fast
+def test_smoke_suite_allows_explicitly_empty_esc50_rows() -> None:
+    mmau_rows = tuple(
+        _mmau_row(f"{task}-{index}", task)
+        for task in ("sound", "music")
+        for index in range(8)
+    )
+    audiocaps_rows = tuple(
+        _caption_row(index, f"AudioCaps caption {index}") for index in range(4)
+    )
+    song_rows = tuple(
+        _song_row(index, f"SongDescriber caption {index}") for index in range(4)
+    )
+
+    cases = build_smoke_cases_from_rows(
+        mmau_rows=mmau_rows,
+        esc50_rows=(),
+        audiocaps_rows=audiocaps_rows,
+        song_describer_rows=song_rows,
+        master_seed=20260710,
+        materialize_audio=lambda row: MaterializedAudio(
+            path=f"/cache/{row.get('id') or row.get('filename')}.wav",
+            sha256=f"sha-{row.get('id') or row.get('filename')}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        ),
+    )
+
+    assert len(cases) == 24
+    assert not any(case.dataset_id == "ashraq/esc50" for case in cases)

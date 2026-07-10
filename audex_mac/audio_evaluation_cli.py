@@ -111,6 +111,23 @@ def main(
             "only, not semantic caption alignment"
         ),
     )
+    parser.add_argument(
+        "--skip-esc50",
+        action="store_true",
+        help=(
+            "explicitly omit ESC-50 smoke cases when the pinned Hugging Face rows "
+            "endpoint is unavailable; records the omission in the manifest"
+        ),
+    )
+    parser.add_argument(
+        "--skip-song-describer",
+        action="store_true",
+        help=(
+            "explicitly omit optional SongDescriber smoke cases when the pinned "
+            "Hugging Face rows endpoint is unavailable; records the omission in "
+            "the manifest"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.model == "2b" and args.profile == "nvfp4":
@@ -140,9 +157,20 @@ def main(
         return fetch_verified_rows(pin, client=client)
 
     def active_fetch(pin: DatasetPin) -> tuple[Mapping[str, Any], ...]:
+        print(
+            "Audio evaluation: fetching " f"{pin.repo_id}/{pin.config}/{pin.split}...",
+            flush=True,
+        )
         if fetch_rows is None:
-            return default_fetch(pin)
-        return fetch_rows(pin, client=client)
+            rows = default_fetch(pin)
+        else:
+            rows = fetch_rows(pin, client=client)
+        print(
+            "Audio evaluation: fetched "
+            f"{len(rows)} rows from {pin.repo_id}/{pin.split}.",
+            flush=True,
+        )
+        return rows
 
     active_materializer = (
         materialize_audio
@@ -153,9 +181,24 @@ def main(
     )
 
     mmau_rows = active_fetch(MMAU_PIN)
-    esc50_rows = active_fetch(ESC50_PIN)
+    esc50_rows: tuple[Mapping[str, Any], ...] = ()
+    if args.skip_esc50:
+        print(
+            "Audio evaluation: skipping ESC-50 by explicit --skip-esc50.",
+            flush=True,
+        )
+    else:
+        esc50_rows = active_fetch(ESC50_PIN)
     audiocaps_rows = active_fetch(AUDIOCAPS_CAPTION_PIN)
-    song_rows = active_fetch(SONG_DESCRIBER_PIN)
+    song_rows: tuple[Mapping[str, Any], ...] = ()
+    if args.skip_song_describer:
+        print(
+            "Audio evaluation: skipping SongDescriber by explicit "
+            "--skip-song-describer.",
+            flush=True,
+        )
+    else:
+        song_rows = active_fetch(SONG_DESCRIBER_PIN)
     cases = build_smoke_cases_from_rows(
         mmau_rows=tuple(mmau_rows),
         esc50_rows=tuple(esc50_rows),
@@ -180,6 +223,7 @@ def main(
                 "path": str(model_path) if model_path is not None else None,
             },
             "generation_oracles": args.generation_oracles,
+            "omitted_datasets": _omitted_datasets(args),
             "datasets": [
                 _pin_payload(pin)
                 for pin in (
@@ -236,6 +280,25 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "license": pin.license,
         "expected_rows": pin.expected_rows,
     }
+
+
+def _omitted_datasets(args: argparse.Namespace) -> list[dict[str, str]]:
+    omitted: list[dict[str, str]] = []
+    if args.skip_esc50:
+        omitted.append(
+            {
+                "repo_id": ESC50_PIN.repo_id,
+                "reason": "explicit --skip-esc50",
+            }
+        )
+    if args.skip_song_describer:
+        omitted.append(
+            {
+                "repo_id": SONG_DESCRIBER_PIN.repo_id,
+                "reason": "explicit --skip-song-describer",
+            }
+        )
+    return omitted
 
 
 def _load_vllm_runtime(model_path: Path | None, profile: str) -> Any:

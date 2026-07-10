@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
 import pytest
 
@@ -12,7 +15,10 @@ from audex_mac.audio_evaluation_hf import (
     DatasetPin,
     HfAudioMaterializer,
     HfDatasetClient,
+    UrlLibTransport,
+    decode_audio_to_16k_wav,
     fetch_verified_rows,
+    inspect_materialized_audio,
     select_stratified_rows,
 )
 
@@ -33,6 +39,20 @@ class FakeTransport:
         payload = self.payloads[url]
         assert isinstance(payload, bytes)
         return payload
+
+
+class FakeResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.payload
 
 
 def _pin() -> DatasetPin:
@@ -213,3 +233,154 @@ def test_hf_audio_materializer_downloads_asset_to_decoder(tmp_path: Path) -> Non
     assert audio.path.endswith(".wav")
     assert decoded == [(b"wav-bytes", Path(audio.path))]
     assert Path(audio.path).read_bytes() == b"RIFF decoded"
+
+
+@pytest.mark.fast
+def test_hf_audio_materializer_repairs_invalid_cached_wav(tmp_path: Path) -> None:
+    row = _row("sound-1", "sound")
+    asset_url = row["audio"][0]["src"]
+    raw_bytes = b"raw-audio"
+    source_hash = hashlib.sha256(raw_bytes).hexdigest()
+    transport = FakeTransport({asset_url: raw_bytes})
+    destination = tmp_path / f"{source_hash}.wav"
+    _write_wav(destination, duration_seconds=31.0, sample_rate=16_000)
+    decoded: list[bytes] = []
+
+    def decoder(raw: bytes, output: Path) -> MaterializedAudio:
+        decoded.append(raw)
+        _write_wav(output, duration_seconds=1.0, sample_rate=16_000)
+        return inspect_materialized_audio(output)
+
+    materializer = HfAudioMaterializer(
+        client=HfDatasetClient(transport=transport),
+        cache_dir=tmp_path,
+        decoder=decoder,
+    )
+
+    audio = materializer.materialize(row)
+
+    assert decoded == [raw_bytes]
+    assert audio.duration_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.fast
+def test_audio_decoder_trims_materialized_inputs_to_audex_contract(
+    tmp_path: Path,
+) -> None:
+    raw = _wav_bytes(duration_seconds=31.0, sample_rate=16_000)
+
+    audio = decode_audio_to_16k_wav(raw, tmp_path / "trimmed.wav")
+
+    assert audio.sample_rate == 16_000
+    assert audio.duration_seconds == pytest.approx(30.0)
+
+
+@pytest.mark.fast
+def test_url_transport_retries_transient_timeouts() -> None:
+    calls = 0
+
+    def opener(request: object, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        del request, timeout
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("slow")
+        return FakeResponse(b'{"ok": true}')
+
+    payload = UrlLibTransport(opener=opener, retries=2).get_json(
+        "https://example.invalid/rows",
+        headers={},
+    )
+
+    assert calls == 2
+    assert payload == {"ok": True}
+
+
+@pytest.mark.fast
+def test_url_transport_fails_loud_after_bounded_retries() -> None:
+    calls = 0
+
+    def opener(request: object, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        del request, timeout
+        calls += 1
+        raise TimeoutError("slow")
+
+    with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+        UrlLibTransport(opener=opener, retries=2).get_bytes(
+            "https://example.invalid/audio.wav",
+            headers={},
+        )
+    assert calls == 2
+
+
+@pytest.mark.fast
+def test_url_transport_retries_server_errors_but_not_client_errors() -> None:
+    calls = 0
+
+    def server_error_then_success(request: object, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        del request, timeout
+        calls += 1
+        if calls == 1:
+            raise HTTPError(
+                "https://example.invalid/rows",
+                500,
+                "Internal Server Error",
+                hdrs={},
+                fp=BytesIO(b""),
+            )
+        return FakeResponse(b'{"ok": true}')
+
+    payload = UrlLibTransport(opener=server_error_then_success, retries=2).get_json(
+        "https://example.invalid/rows",
+        headers={},
+    )
+
+    assert calls == 2
+    assert payload == {"ok": True}
+
+    def client_error(request: object, *, timeout: float) -> FakeResponse:
+        nonlocal calls
+        del request, timeout
+        calls += 1
+        raise HTTPError(
+            "https://example.invalid/rows",
+            404,
+            "Not Found",
+            hdrs={},
+            fp=BytesIO(b""),
+        )
+
+    calls = 0
+    with pytest.raises(RuntimeError, match="failed after 1 attempts"):
+        UrlLibTransport(opener=client_error, retries=2).get_json(
+            "https://example.invalid/rows",
+            headers={},
+        )
+    assert calls == 1
+
+
+def _wav_bytes(*, duration_seconds: float, sample_rate: int) -> bytes:
+    import math
+    import wave
+
+    output = BytesIO()
+    frame_count = int(duration_seconds * sample_rate)
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(frame_count):
+            sample = int(4000 * math.sin(2.0 * math.pi * 440.0 * index / sample_rate))
+            frames.extend(sample.to_bytes(2, "little", signed=True))
+        wav.writeframes(bytes(frames))
+    return output.getvalue()
+
+
+def _write_wav(path: Path, *, duration_seconds: float, sample_rate: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        _wav_bytes(duration_seconds=duration_seconds, sample_rate=sample_rate)
+    )

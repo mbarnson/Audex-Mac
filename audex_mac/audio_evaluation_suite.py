@@ -75,13 +75,15 @@ def build_smoke_cases_from_rows(
         row_id=lambda row: str(row.get("id", "")),
         stratum=lambda row: str(row.get("task", "")),
     )
-    esc_selected = select_stratified_rows(
-        esc50_rows,
-        count=SMOKE_ESC50_CASES,
-        master_seed=master_seed,
-        row_id=lambda row: str(row.get("filename", row.get("file", ""))),
-        stratum=lambda row: str(row.get("category", "")),
-    )
+    esc_selected: tuple[Mapping[str, Any], ...] = ()
+    if esc50_rows:
+        esc_selected = select_stratified_rows(
+            esc50_rows,
+            count=SMOKE_ESC50_CASES,
+            master_seed=master_seed,
+            row_id=lambda row: str(row.get("filename", row.get("file", ""))),
+            stratum=lambda row: str(row.get("category", "")),
+        )
     audiocaps_selected = _select_rows(
         audiocaps_rows,
         count=SMOKE_AUDIOCAPS_CASES,
@@ -97,7 +99,6 @@ def build_smoke_cases_from_rows(
             row_id=lambda row: str(row.get("caption_id", row.get("track_id", ""))),
         )
 
-    esc_foils = _placeholder_foil_by_category(esc50_rows)
     cases: list[AudioEvaluationCase] = []
     cases.extend(
         build_mmau_cases(
@@ -107,14 +108,16 @@ def build_smoke_cases_from_rows(
             materialize_audio=materialize_audio,
         )
     )
-    cases.extend(
-        build_esc50_cases(
-            esc_selected,
-            dataset_revision=ESC50_PIN.revision,
-            materialize_audio=materialize_audio,
-            foil_by_category=esc_foils,
+    if esc_selected:
+        esc_foils = _placeholder_foil_by_category(esc50_rows)
+        cases.extend(
+            build_esc50_cases(
+                esc_selected,
+                dataset_revision=ESC50_PIN.revision,
+                materialize_audio=materialize_audio,
+                foil_by_category=esc_foils,
+            )
         )
-    )
     cases.extend(
         build_caption_cases(
             audiocaps_selected,

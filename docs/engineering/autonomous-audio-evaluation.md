@@ -506,6 +506,14 @@ failures.
 Use `--model-path /path/to/checkpoint_folder_full` to override cached-model
 resolution for a local experiment.
 
+Current acquisition caveat: the pinned `ashraq/esc50` Hugging Face rows endpoint
+can fail before row 0 because the embedded-audio Parquet row group exceeds the
+dataset-server scan limit. The pinned SongDescriber rows endpoint has also
+returned HTTP 500 during local smoke materialization. Keep strict smoke as the
+default. When validating the rest of the pipeline during source outages, use
+`--skip-esc50` and/or `--skip-song-describer`; the manifest records every
+omitted dataset. With both flags, smoke case count drops from 32 to 20.
+
 Likely future commands, after semantic oracle qualification exists:
 
 ```sh

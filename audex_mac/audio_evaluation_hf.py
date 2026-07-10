@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -19,6 +20,7 @@ from .audio_evaluation_datasets import MaterializedAudio
 HF_API_BASE = "https://huggingface.co/api/datasets"
 HF_DATASET_SERVER_ROWS = "https://datasets-server.huggingface.co/rows"
 EVALUATION_AUDIO_SAMPLE_RATE = 16_000
+MAX_EVALUATION_AUDIO_SECONDS = 30.0
 
 
 class HttpTransport(Protocol):
@@ -58,18 +60,55 @@ class DatasetPin:
 class UrlLibTransport:
     """Small urllib transport so tests can replace network access cleanly."""
 
+    def __init__(
+        self,
+        *,
+        opener: Callable[..., Any] = urlopen,
+        retries: int = 3,
+        json_timeout: float = 30.0,
+        bytes_timeout: float = 60.0,
+    ) -> None:
+        if retries <= 0:
+            raise ValueError("retries must be positive")
+        self._opener = opener
+        self._retries = retries
+        self._json_timeout = json_timeout
+        self._bytes_timeout = bytes_timeout
+
     def get_json(self, url: str, *, headers: Mapping[str, str]) -> Mapping[str, Any]:
-        request = Request(url, headers=dict(headers))
-        with urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = json.loads(
+            self._read(
+                Request(url, headers=dict(headers)), timeout=self._json_timeout
+            ).decode("utf-8")
+        )
         if not isinstance(payload, Mapping):
             raise ValueError(f"expected JSON object from {url}")
         return payload
 
     def get_bytes(self, url: str, *, headers: Mapping[str, str]) -> bytes:
-        request = Request(url, headers=dict(headers))
-        with urlopen(request, timeout=60) as response:
-            return response.read()
+        return self._read(
+            Request(url, headers=dict(headers)),
+            timeout=self._bytes_timeout,
+        )
+
+    def _read(self, request: Request, *, timeout: float) -> bytes:
+        last_error: BaseException | None = None
+        attempts = 0
+        for attempt in range(self._retries):
+            attempts = attempt + 1
+            try:
+                with self._opener(request, timeout=timeout) as response:
+                    return response.read()
+            except HTTPError as exc:
+                last_error = exc
+                if exc.code < 500 or attempt == self._retries - 1:
+                    break
+            except (OSError, TimeoutError) as exc:
+                last_error = exc
+        raise RuntimeError(
+            f"Hugging Face request failed after {attempts} attempts: "
+            f"{request.full_url}"
+        ) from last_error
 
 
 class HfDatasetClient:
@@ -251,7 +290,10 @@ class HfAudioMaterializer:
         destination = self._cache_dir / f"{source_hash}.wav"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         if destination.is_file():
-            return inspect_materialized_audio(destination)
+            try:
+                return inspect_materialized_audio(destination)
+            except ValueError:
+                pass
         return self._decoder(raw_bytes, destination)
 
 
@@ -280,6 +322,9 @@ def decode_audio_to_16k_wav(raw_bytes: bytes, destination: Path) -> Materialized
             int(sample_rate) // divisor,
         ).astype("float32")
         sample_rate = EVALUATION_AUDIO_SAMPLE_RATE
+    max_samples = int(EVALUATION_AUDIO_SAMPLE_RATE * MAX_EVALUATION_AUDIO_SECONDS)
+    if mono.size > max_samples:
+        mono = mono[:max_samples]
     peak = float(np.max(np.abs(mono))) if mono.size else 0.0
     if peak > 1.0:
         mono = mono / peak
