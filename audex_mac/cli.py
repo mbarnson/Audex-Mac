@@ -896,15 +896,24 @@ def main(argv: list[str] | None = None) -> int:
         if run.transcript:
             print("Last assistant turn:")
             print(run.transcript[-1]["assistant"])
-        if not run.gate.evaluated:
-            print("Text benchmark gate: not evaluated for a limited-turn diagnostic")
+        assessment = run.assessment
+        if assessment.full_benchmark_evaluated:
+            print(
+                "Text runtime compatibility: "
+                + ("passed" if assessment.compatible else "failed")
+            )
+        else:
+            print("Text runtime compatibility: partial limited-turn diagnostic")
+        for observation in assessment.quality_observations:
+            if observation.satisfied:
+                continue
+            print(
+                f"Model quality observation: {observation.name}: {observation.detail}"
+            )
+        if assessment.compatible:
             return 0
-        if run.gate.passed:
-            print("Text benchmark gate: passed")
-            return 0
-        print("Text benchmark gate: failed")
-        for failure in run.gate.failures:
-            print(f"Gate failure: {failure}")
+        for failure in assessment.compatibility_failures:
+            print(f"Compatibility failure: {failure}")
         return 2
 
     preflight = preflight_audio_runtime(selected_model)

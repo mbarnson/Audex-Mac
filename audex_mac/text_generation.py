@@ -11,12 +11,17 @@ from typing import Any
 from .metal_policy import inspect_metal_runtime
 from .models import AudexModel
 from .patches import apply_audex_runtime_patches
-from .speech_policy import assistant_prefix
 from .text_benchmark import TextBenchmark
-from .text_gate import TextGateResult, evaluate_text_benchmark
+from .text_chat import (
+    CHAT_STOP_MARKERS,
+    clean_text_completion,
+    complete_text_assistant_turn,
+    render_text_chat_prompt,
+)
+from .text_gate import TextBenchmarkAssessment, evaluate_text_benchmark
 from .text_runtime import TextBackend, TextRuntimePreflight, preflight_text_runtime
 
-STOP_MARKERS = ("<|im_end|>", "<|end_of_text|>", "<|eot_id|>")
+STOP_MARKERS = CHAT_STOP_MARKERS
 RUNS_DIR = Path(__file__).resolve().parents[1] / ".audex" / "runs"
 
 
@@ -24,7 +29,7 @@ RUNS_DIR = Path(__file__).resolve().parents[1] / ".audex" / "runs"
 class TextBenchmarkRun:
     run_log_path: Path
     transcript: list[dict[str, Any]]
-    gate: TextGateResult
+    assessment: TextBenchmarkAssessment
 
 
 def run_text_benchmark(
@@ -113,8 +118,10 @@ def _run_text_benchmark_mlx(
     for index, turn in enumerate(turns, start=1):
         user_text = turn["content"]
         messages.append({"role": "user", "content": user_text})
-        prompt = _build_chatml_prompt(
+        prompt = render_text_chat_prompt(
+            tokenizer,
             messages,
+            model_path=preflight.model_path,
             thinking_enabled=thinking_enabled,
         )
         mx.random.seed(sampler_config["seed"])
@@ -132,13 +139,18 @@ def _run_text_benchmark_mlx(
             last_response = response
             if _contains_stop_marker(generated):
                 break
-        assistant_text = clean_generation(generated)
-        messages.append({"role": "assistant", "content": assistant_text})
+        assistant_turn = complete_text_assistant_turn(
+            generated,
+            thinking_enabled=thinking_enabled,
+        )
+        assistant_text = assistant_turn.answer
+        messages.append({"role": "assistant", "content": assistant_turn.raw_content})
         transcript.append(
             {
                 "turn": index,
                 "user": user_text,
                 "assistant": assistant_text,
+                "assistant_raw": assistant_turn.raw_content,
                 "elapsed_seconds": round(time.time() - turn_start, 3),
                 "prompt_tokens": getattr(last_response, "prompt_tokens", None),
                 "prompt_tps": _round_optional(
@@ -166,13 +178,17 @@ def _run_text_benchmark_mlx(
         transcript=transcript,
         extra={"model_load_seconds": model_load_seconds},
     )
-    gate = _evaluate_gate(benchmark, transcript, limit_turns=limit_turns)
-    run_log["text_gate"] = _gate_log(gate)
+    assessment = _evaluate_assessment(
+        benchmark,
+        transcript,
+        limit_turns=limit_turns,
+    )
+    _record_assessment(run_log, assessment)
     run_log_path = _write_run_log(run_log)
     return TextBenchmarkRun(
         run_log_path=run_log_path,
         transcript=transcript,
-        gate=gate,
+        assessment=assessment,
     )
 
 
@@ -203,6 +219,7 @@ def _run_text_benchmark_vllm(
         enable_prefix_caching=True,
         enforce_eager=False,
     )
+    tokenizer = llm.get_tokenizer()
     model_load_seconds = round(time.time() - load_started_at, 3)
 
     messages: list[dict[str, str]] = [
@@ -214,21 +231,28 @@ def _run_text_benchmark_vllm(
     for index, turn in enumerate(turns, start=1):
         user_text = turn["content"]
         messages.append({"role": "user", "content": user_text})
-        prompt = _build_chatml_prompt(
+        prompt = render_text_chat_prompt(
+            tokenizer,
             messages,
+            model_path=preflight.model_path,
             thinking_enabled=thinking_enabled,
         )
         turn_start = time.time()
         request_output = llm.generate([prompt], sampling_params)[0]
         elapsed_seconds = round(time.time() - turn_start, 3)
         output = request_output.outputs[0]
-        assistant_text = clean_generation(output.text)
-        messages.append({"role": "assistant", "content": assistant_text})
+        assistant_turn = complete_text_assistant_turn(
+            output.text,
+            thinking_enabled=thinking_enabled,
+        )
+        assistant_text = assistant_turn.answer
+        messages.append({"role": "assistant", "content": assistant_turn.raw_content})
         transcript.append(
             _vllm_turn_record(
                 turn=index,
                 user=user_text,
                 assistant=assistant_text,
+                assistant_raw=assistant_turn.raw_content,
                 elapsed_seconds=elapsed_seconds,
                 request_output=request_output,
                 completion_output=output,
@@ -249,23 +273,22 @@ def _run_text_benchmark_vllm(
             "model_load_seconds": model_load_seconds,
         },
     )
-    gate = _evaluate_gate(benchmark, transcript, limit_turns=limit_turns)
-    run_log["text_gate"] = _gate_log(gate)
+    assessment = _evaluate_assessment(
+        benchmark,
+        transcript,
+        limit_turns=limit_turns,
+    )
+    _record_assessment(run_log, assessment)
     run_log_path = _write_run_log(run_log)
     return TextBenchmarkRun(
         run_log_path=run_log_path,
         transcript=transcript,
-        gate=gate,
+        assessment=assessment,
     )
 
 
 def clean_generation(text: str) -> str:
-    cleaned = text
-    for marker in STOP_MARKERS:
-        index = cleaned.find(marker)
-        if index != -1:
-            cleaned = cleaned[:index]
-    return cleaned.strip()
+    return clean_text_completion(text)
 
 
 def _contains_stop_marker(text: str) -> bool:
@@ -283,6 +306,7 @@ def _vllm_turn_record(
     turn: int,
     user: str,
     assistant: str,
+    assistant_raw: str | None = None,
     elapsed_seconds: float,
     request_output: Any,
     completion_output: Any,
@@ -294,6 +318,7 @@ def _vllm_turn_record(
         "turn": turn,
         "user": user,
         "assistant": assistant,
+        "assistant_raw": assistant if assistant_raw is None else assistant_raw,
         "elapsed_seconds": elapsed_seconds,
         "prompt_tokens": (
             len(prompt_token_ids) if prompt_token_ids is not None else None
@@ -360,42 +385,44 @@ def _write_run_log(run_log: dict[str, Any]) -> Path:
     return run_log_path
 
 
-def _gate_log(gate: TextGateResult) -> dict[str, Any]:
-    return {
-        "evaluated": gate.evaluated,
-        "passed": gate.passed,
-        "failures": list(gate.failures),
-        "exact_token_parity_required": gate.exact_token_parity_required,
-        "logit_parity_required": gate.logit_parity_required,
+def _record_assessment(
+    run_log: dict[str, Any],
+    assessment: TextBenchmarkAssessment,
+) -> None:
+    run_log["text_compatibility"] = {
+        "full_benchmark_evaluated": assessment.full_benchmark_evaluated,
+        "compatible": assessment.compatible,
+        "failures": list(assessment.compatibility_failures),
+    }
+    run_log["text_quality_observations"] = [
+        asdict(observation) for observation in assessment.quality_observations
+    ]
+    run_log["text_evaluation_policy"] = {
+        "exact_token_parity_required": assessment.exact_token_parity_required,
+        "logit_parity_required": assessment.logit_parity_required,
+        "quality_observations_are_blocking": False,
     }
 
 
-def _evaluate_gate(
+def _evaluate_assessment(
     benchmark: TextBenchmark,
     transcript: list[dict[str, Any]],
     *,
     limit_turns: int | None,
-) -> TextGateResult:
+) -> TextBenchmarkAssessment:
     if limit_turns is not None:
-        return TextGateResult(
-            ("acceptance gate requires the complete benchmark",),
-            evaluated=False,
+        failures = (
+            ("every observed benchmark turn must produce a non-empty answer",)
+            if any(not str(turn.get("assistant", "")).strip() for turn in transcript)
+            else ()
+        )
+        return TextBenchmarkAssessment(
+            compatibility_failures=failures,
+            quality_observations=(),
+            full_benchmark_evaluated=False,
         )
     return evaluate_text_benchmark(benchmark, transcript)
 
 
 def _benchmark_system_prompt(benchmark: TextBenchmark) -> str:
     return benchmark.system
-
-
-def _build_chatml_prompt(
-    messages: list[dict[str, str]],
-    *,
-    thinking_enabled: bool,
-) -> str:
-    parts: list[str] = []
-    for message in messages:
-        parts.append(f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n")
-    parts.append("<|im_start|>assistant\n")
-    parts.append(assistant_prefix(thinking_enabled=thinking_enabled))
-    return "".join(parts)

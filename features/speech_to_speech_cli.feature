@@ -17,11 +17,11 @@ Feature: Speech-to-speech CLI
     Then Audex starts push-to-talk recording
 
   @slow @local_model @audio_device
-  Scenario: User talks to Audex from the CLI
+  Scenario: Recorded speech completes a native Audex CLI turn
     Given a supported Audex model is cached
     And the Audex causal speech decoder is available
-    When the user starts the CLI with ./start.sh
-    And records one push-to-talk utterance
+    And a recorded speech fixture is available
+    When the CLI processes one recorded speech turn
     Then Audex receives the user's speech as native audio input
     And Audex generates a spoken response
     And the response is played locally on the Mac

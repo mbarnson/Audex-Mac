@@ -20,6 +20,14 @@ Feature: vLLM Metal patch guards
     And the error points to docs/engineering/patches.md
 
   @fast
+  Scenario: Pinned vLLM Metal callable signature changed
+    Given a required vLLM Metal patch target has an incompatible signature
+    When start.sh runs patch guards
+    Then startup stops before model launch
+    And the error names the missing required parameter
+    And the error points to docs/engineering/patches.md
+
+  @fast
   Scenario: vLLM Metal diagnostics distinguish the CPU facade from CPU fallback
     Given vLLM Metal reports its compatibility CPU facade
     And MLX reports a GPU default device

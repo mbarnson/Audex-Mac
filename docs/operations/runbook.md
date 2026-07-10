@@ -53,6 +53,16 @@ The prompt must mention:
 - NVIDIA model license
 - that Audex-Mac's MIT license does not cover NVIDIA model weights
 
+NVIDIA's Audex repositories contain both a root `LICENSE` file and a
+lowercase `license/` directory. A full unfiltered `hf download` therefore
+fails on default case-insensitive APFS when Hugging Face tries to create the
+directory after the file. Audex-Mac passes `ignore_patterns=["license/*"]`
+in addition to narrow checkpoint allow-lists. For a manual full download, use:
+
+```sh
+hf download nvidia/Nemotron-Labs-Audex-2B --exclude "license/*"
+```
+
 ## Dependency Refresh
 
 Dependencies should not churn on every run.

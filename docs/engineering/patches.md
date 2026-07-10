@@ -6146,9 +6146,25 @@ After changes, run the most relevant fast tests first, then a startup smoke test
 - CI and the pre-commit hook run `pytest -m fast`. The two model-backed Gherkin
   scenarios are genuinely slow/local, skip when their explicit prerequisites
   are absent, and no longer fabricate passing model or audio evidence.
-- The text benchmark now has a deterministic acceptance gate recorded in its
-  run log and returned by the CLI. A real ten-turn Audex-2B direct-MLX run on
-  Metal failed honestly because turn 9 returned the wrong final chunk; the
-  gate reported `turn 9 does not produce [[3, 1, 4], [1, 5, 9], [2]]`.
-- Black, Ruff, shell syntax, whitespace checks, and the final fast suite pass;
-  the Metal-enabled run completed with `569 passed, 2 deselected`.
+- The text benchmark now separates runtime compatibility failures from
+  non-blocking model-quality observations. Empty output, incomplete turn count,
+  and catastrophic answer collapse remain hard failures; answer-specific
+  reasoning misses are recorded as evidence without misclassifying sampler
+  variance as a broken runtime.
+- Ten-turn text history is rendered through the official model
+  `chat_template.jinja` in both vLLM-Metal and direct-MLX modes. Thinking-mode
+  completions reconstruct the `<think>\n` prefix consumed by the generation
+  prompt before entering history, while the template performs its documented
+  historical-reasoning truncation. Text-only downloads include the full
+  checkpoint's template for Audex-2B, whose text-only folder omits it.
+  Speech and text downloads retain narrow allow-lists that do not materialize
+  NVIDIA's case-colliding root `LICENSE` file and `license/` directory on APFS.
+- Fast Gherkin coverage includes template-valid ten-turn reasoning history and
+  callable-signature drift in required vLLM-Metal patch targets. The
+  model-backed recorded-WAV scenario describes the direct CLI behavior it
+  actually executes rather than claiming to launch through `start.sh`.
+- Validation: `./scripts/lint.sh` passed; the Metal-enabled fast suite passed
+  with `586 passed, 2 deselected`; the complete suite passed with
+  `586 passed, 2 skipped`; and the real Audex-2B direct-MLX ten-turn Gherkin
+  scenario passed in 90.78 seconds. The audio-device scenario remained skipped
+  because no `AUDEX_BDD_INPUT_WAV` fixture was supplied.

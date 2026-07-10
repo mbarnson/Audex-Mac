@@ -42,6 +42,9 @@ def make_snapshot(cache_root: Path) -> Path:
         path = snapshot / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
+    template = snapshot / "checkpoint_folder_full" / "chat_template.jinja"
+    template.parent.mkdir(parents=True, exist_ok=True)
+    template.write_text("official template", encoding="utf-8")
     (checkpoint / "model.safetensors.index.json").write_text(
         json.dumps({"weight_map": {"lm_head.weight": "model.safetensors"}}),
         encoding="utf-8",
@@ -80,3 +83,65 @@ def test_mlx_text_preflight_does_not_require_vllm_dependencies(
     assert dependency_names == {"python>=3.12,<3.14", "mlx", "mlx_lm"}
     assert "python module vllm" not in result.missing_items
     assert "python module vllm_metal" not in result.missing_items
+
+
+def test_text_preflight_requires_the_shipped_audex_chat_template(
+    tmp_path: Path,
+) -> None:
+    snapshot = make_snapshot(tmp_path)
+    (snapshot / "checkpoint_folder_textonly" / "model.safetensors").write_text(
+        "weights",
+        encoding="utf-8",
+    )
+    (snapshot / "checkpoint_folder_full" / "chat_template.jinja").unlink()
+
+    result = preflight_text_runtime(
+        DEFAULT_MODEL,
+        benchmark(),
+        cache_root=tmp_path,
+        apply_patches=False,
+        backend="mlx",
+    )
+
+    assert result.ready is False
+    assert "Audex chat_template.jinja" in result.missing_items
+
+
+def test_text_preflight_falls_back_when_referenced_snapshot_omits_template(
+    tmp_path: Path,
+) -> None:
+    complete = make_snapshot(tmp_path)
+    (complete / "checkpoint_folder_textonly" / "model.safetensors").write_text(
+        "weights", encoding="utf-8"
+    )
+    repo_dir = tmp_path / "models--nvidia--Nemotron-Labs-Audex-2B"
+    partial = repo_dir / "snapshots" / "new-without-template"
+    for rel in DEFAULT_MODEL.text_required_files:
+        path = partial / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    (
+        partial / "checkpoint_folder_textonly" / "model.safetensors.index.json"
+    ).write_text(
+        json.dumps({"weight_map": {"lm_head.weight": "model.safetensors"}}),
+        encoding="utf-8",
+    )
+    (partial / "checkpoint_folder_textonly" / "model.safetensors").write_text(
+        "weights",
+        encoding="utf-8",
+    )
+    (repo_dir / "refs" / "main").write_text(
+        "new-without-template",
+        encoding="utf-8",
+    )
+
+    result = preflight_text_runtime(
+        DEFAULT_MODEL,
+        benchmark(),
+        cache_root=tmp_path,
+        apply_patches=False,
+        backend="mlx",
+    )
+
+    assert result.ready is True
+    assert result.snapshot_check.snapshot_path == complete

@@ -43,20 +43,55 @@ def is_palindrome(text):
     ]
 
 
-def test_text_gate_accepts_observable_benchmark_outcomes() -> None:
+def test_text_assessment_separates_compatible_runtime_and_quality_observations() -> (
+    None
+):
     result = evaluate_text_benchmark(load_text_benchmark(), passing_transcript())
 
-    assert result.passed is True
-    assert result.failures == ()
+    assert result.compatible is True
+    assert result.compatibility_failures == ()
+    assert result.full_benchmark_evaluated is True
+    assert all(observation.satisfied for observation in result.quality_observations)
     assert result.exact_token_parity_required is False
     assert result.logit_parity_required is False
 
 
-def test_text_gate_rejects_incorrect_contextual_chunking_answer() -> None:
+def test_text_assessment_records_reasoning_error_without_failing_runtime() -> None:
     transcript = passing_transcript()
     transcript[8]["assistant"] = "[[3, 1, 4], [1, 5, 9], [5, 2]]"
 
     result = evaluate_text_benchmark(load_text_benchmark(), transcript)
 
-    assert result.passed is False
-    assert result.failures == ("turn 9 does not produce [[3, 1, 4], [1, 5, 9], [2]]",)
+    assert result.compatible is True
+    chunking = next(
+        observation
+        for observation in result.quality_observations
+        if observation.name == "contextual_chunking_answer"
+    )
+    assert chunking.satisfied is False
+    assert chunking.detail == ("turn 9 did not produce [[3, 1, 4], [1, 5, 9], [2]]")
+
+
+def test_text_assessment_rejects_empty_runtime_generation() -> None:
+    transcript = passing_transcript()
+    transcript[4]["assistant"] = ""
+
+    result = evaluate_text_benchmark(load_text_benchmark(), transcript)
+
+    assert result.compatible is False
+    assert result.compatibility_failures == (
+        "every benchmark turn must produce a non-empty answer",
+    )
+
+
+def test_text_assessment_rejects_catastrophic_cross_prompt_collapse() -> None:
+    transcript = passing_transcript()
+    for turn in transcript:
+        turn["assistant"] = "the same cached answer"
+
+    result = evaluate_text_benchmark(load_text_benchmark(), transcript)
+
+    assert result.compatible is False
+    assert result.compatibility_failures == (
+        "benchmark answers collapsed across unrelated prompts",
+    )

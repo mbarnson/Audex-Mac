@@ -13,6 +13,7 @@ from .metal_policy import MetalRuntimePolicy, inspect_metal_runtime
 from .models import AudexModel
 from .patches.runtime import AudexPatchReport, apply_audex_runtime_patches
 from .text_benchmark import TextBenchmark, load_text_benchmark
+from .text_chat import AUDEX_CHAT_TEMPLATE_RELATIVE_PATH, find_audex_chat_template
 
 TextBackend = Literal["mlx", "vllm"]
 
@@ -37,6 +38,7 @@ class TextRuntimePreflight:
     def ready(self) -> bool:
         ready = (
             self.snapshot_check.complete
+            and self.chat_template_path is not None
             and all(check.present for check in self.dependency_checks)
             and (
                 self.patch_report is None
@@ -52,8 +54,19 @@ class TextRuntimePreflight:
         return self.snapshot_check.snapshot_path / self.model.text_checkpoint_dirs[0]
 
     @property
+    def chat_template_path(self) -> Path | None:
+        if self.model_path is None:
+            return None
+        return find_audex_chat_template(self.model_path)
+
+    @property
     def missing_items(self) -> tuple[str, ...]:
         missing = list(self.snapshot_check.missing_summary)
+        if (
+            self.snapshot_check.snapshot_path is not None
+            and self.chat_template_path is None
+        ):
+            missing.append("Audex chat_template.jinja")
         for check in self.dependency_checks:
             if check.present:
                 continue
@@ -97,7 +110,7 @@ def preflight_text_runtime(
     benchmark = benchmark or load_text_benchmark()
     snapshot_check = verify_snapshot(
         model,
-        required_files=model.text_required_files,
+        required_files=model.text_required_files + (AUDEX_CHAT_TEMPLATE_RELATIVE_PATH,),
         checkpoint_dirs=model.text_checkpoint_dirs,
         cache_root=cache_root,
     )

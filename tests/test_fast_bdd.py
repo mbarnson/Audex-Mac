@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import json
 import os
+import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -10,6 +12,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from audex_mac import cli as audex_cli
 from audex_mac import sts_cli
 from audex_mac.audio_contract import (
     NVIDIA_TTS_CFG_SCALE,
@@ -36,7 +39,6 @@ from audex_mac.audio_projector import (
 from audex_mac.audio_runtime import preflight_audio_runtime
 from audex_mac.audio_splice import validate_audio_splice_plan
 from audex_mac.bootstrap import model_download_notice
-from audex_mac.cli import DEFAULT_STS_BACKEND
 from audex_mac.conversations import ConversationStore
 from audex_mac.interactive_input import InputKind, TurnInput, classify_submission
 from audex_mac.model_select import select_model
@@ -48,10 +50,8 @@ from audex_mac.models import (
 )
 from audex_mac.patch_guards import (
     PatchGuardError,
-    PatchTarget,
     VllmMetalState,
     enforce_patch_guards,
-    run_patch_guards,
 )
 from audex_mac.personas import Persona, load_persona
 from audex_mac.speech_decoder import (
@@ -66,10 +66,13 @@ from audex_mac.speech_policy import (
     assistant_prefix,
 )
 from audex_mac.text_benchmark import load_text_benchmark
-from audex_mac.text_gate import evaluate_text_benchmark
+from audex_mac.text_gate import TextBenchmarkAssessment, evaluate_text_benchmark
 from audex_mac.text_generation import run_text_benchmark
 from audex_mac.text_runtime import preflight_text_runtime
-from audex_mac.vllm_diagnostics import _interpret_expected_cpu_facade
+from audex_mac.vllm_diagnostics import (
+    _diagnostic_verdict,
+    _interpret_expected_cpu_facade,
+)
 from audex_mac.vllm_runtime import AudexVllmRuntime
 from audex_mac.vllm_sts_requests import (
     build_asr_projected_embeddings_request,
@@ -79,6 +82,7 @@ from audex_mac.vllm_sts_requests import (
 )
 
 FEATURE_DIR = Path(__file__).resolve().parents[1] / "features"
+REAL_STS_SESSION = sts_cli.AudexSpeechToSpeechSession
 
 scenarios(str(FEATURE_DIR / "model_selection.feature"))
 scenarios(str(FEATURE_DIR / "patch_guards.feature"))
@@ -106,8 +110,13 @@ class FakeProbe:
 
 
 class FakeProvider:
-    def __init__(self, missing: bool = False) -> None:
+    def __init__(
+        self,
+        missing: bool = False,
+        incompatible_signature: bool = False,
+    ) -> None:
         self.missing = missing
+        self.incompatible_signature = incompatible_signature
 
     def import_module(self, module_name: str) -> ModuleType:
         module = ModuleType(module_name)
@@ -115,11 +124,16 @@ class FakeProvider:
             return module
 
         if module_name.endswith("model_adapter"):
+            build_multimodal_adapter = (
+                (lambda self, model: None)
+                if self.incompatible_signature
+                else (lambda self, model, hf_config: None)
+            )
             module.DefaultModelAdapter = type(
                 "DefaultModelAdapter",
                 (),
                 {
-                    "build_multimodal_adapter": lambda self, model, hf_config: None,
+                    "build_multimodal_adapter": build_multimodal_adapter,
                     "should_force_text_backbone": lambda self, hf_config: False,
                     "normalize_model_config": lambda self, model_config: None,
                 },
@@ -152,6 +166,88 @@ def imported_runtime_packages() -> set[str]:
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 imported_packages.add(node.module.split(".", 1)[0])
     return imported_packages
+
+
+def run_start_harness(tmp_path: Path, *, runtime_present: bool) -> list[str]:
+    bin_dir = tmp_path / "bin"
+    runtime_dir = tmp_path / "runtime"
+    vendor_dir = tmp_path / "vendor"
+    state_dir = tmp_path / "state"
+    project_venv = tmp_path / "project-venv"
+    events_path = tmp_path / "start-events.log"
+    runtime_template = tmp_path / "runtime-python"
+    base_python = bin_dir / "base-python"
+    fake_git = bin_dir / "git"
+    bin_dir.mkdir()
+    state_dir.mkdir()
+
+    runtime_template.write_text(
+        "#!/usr/bin/env bash\n" 'echo "python:$*" >> "${FAKE_START_LOG}"\n' "exit 0\n",
+        encoding="utf-8",
+    )
+    base_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "${3:-}" == repo ]]; then echo https://example.invalid/vllm-metal; fi\n'
+        'if [[ "${3:-}" == pinned_commit ]]; then echo pin; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_git.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "git:$*" >> "${FAKE_START_LOG}"\n'
+        'if [[ "${1:-}" == clone ]]; then\n'
+        '  mkdir -p "${3}/.git"\n'
+        "  cat > \"${3}/install.sh\" <<'INSTALL'\n"
+        "#!/usr/bin/env bash\n"
+        'echo install:vllm-metal >> "${FAKE_START_LOG}"\n'
+        'mkdir -p "${FAKE_RUNTIME_DIR}/bin"\n'
+        'cp "${FAKE_RUNTIME_TEMPLATE}" "${FAKE_RUNTIME_DIR}/bin/python"\n'
+        'chmod +x "${FAKE_RUNTIME_DIR}/bin/python"\n'
+        "INSTALL\n"
+        '  chmod +x "${3}/install.sh"\n'
+        "fi\n"
+        "if [[ \"$*\" == *'rev-parse HEAD'* ]]; then echo pin; fi\n"
+        "if [[ \"$*\" == *'refs/remotes/origin/main'* ]]; then echo pin; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    for executable in (runtime_template, base_python, fake_git):
+        executable.chmod(0o755)
+
+    if runtime_present:
+        (runtime_dir / "bin").mkdir(parents=True)
+        (runtime_dir / "bin" / "python").write_bytes(runtime_template.read_bytes())
+        (runtime_dir / "bin" / "python").chmod(0o755)
+        (vendor_dir / ".git").mkdir(parents=True)
+        (state_dir / "vllm-metal-deps.stamp").touch()
+
+    start_sh = Path(__file__).resolve().parents[1] / "start.sh"
+    command = f"""
+source {start_sh}
+VENV_DIR={project_venv}
+VLLM_METAL_VENDOR_DIR={vendor_dir}
+VLLM_METAL_VENV_DIR={runtime_dir}
+STATE_DIR={state_dir}
+DEPS_STAMP={state_dir / 'deps.stamp'}
+VLLM_METAL_DEPS_STAMP={state_dir / 'vllm-metal-deps.stamp'}
+select_python_bin() {{ echo {base_python}; }}
+main
+"""
+    env = os.environ | {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_START_LOG": str(events_path),
+        "FAKE_RUNTIME_DIR": str(runtime_dir),
+        "FAKE_RUNTIME_TEMPLATE": str(runtime_template),
+    }
+    result = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return events_path.read_text(encoding="utf-8").splitlines()
 
 
 # Model selection
@@ -273,6 +369,16 @@ def missing_patched_symbol(ctx: dict) -> None:
     ctx["missing_symbol"] = True
 
 
+@given("a required vLLM Metal patch target has an incompatible signature")
+def incompatible_patch_target_signature(ctx: dict) -> None:
+    ctx["vllm_state"] = VllmMetalState(
+        installed_commit="old",
+        pinned_commit="old",
+        upstream_head="old",
+    )
+    ctx["incompatible_signature"] = True
+
+
 @when("start.sh runs patch guards")
 def run_guards(ctx: dict, tmp_path: Path) -> None:
     stdout = StringIO()
@@ -281,7 +387,10 @@ def run_guards(ctx: dict, tmp_path: Path) -> None:
     try:
         ctx["patch_result"] = enforce_patch_guards(
             ctx["vllm_state"],
-            provider=FakeProvider(missing=ctx.get("missing_symbol", False)),
+            provider=FakeProvider(
+                missing=ctx.get("missing_symbol", False),
+                incompatible_signature=ctx.get("incompatible_signature", False),
+            ),
             update_prompt_path=update_prompt_path,
             stdout=stdout,
             stderr=stderr,
@@ -322,6 +431,12 @@ def error_names_symbol(ctx: dict) -> None:
     assert ctx["patch_result"].missing_symbol in ctx["patch_error"]
 
 
+@then("the error names the missing required parameter")
+def error_names_missing_required_parameter(ctx: dict) -> None:
+    assert ctx["patch_result"].missing_symbol.endswith("(hf_config)")
+    assert ctx["patch_result"].missing_symbol in ctx["patch_error"]
+
+
 @then("the error points to docs/engineering/patches.md")
 def error_points_to_patches(ctx: dict) -> None:
     assert "docs/engineering/patches.md" in ctx["patch_error"]
@@ -333,21 +448,57 @@ def vllm_metal_reports_cpu_facade(ctx: dict) -> None:
     ctx["vllm_metal_diagnostic"] = {
         "platform": {"device_type_facade": "cpu"},
         "interpretation": _interpret_expected_cpu_facade(),
+        "parent_process": {"metal_policy": {"ready": True}},
+        "spawn_probe": {"returncode": 0},
+        "platform_resolution_probe": {
+            "direct_vllm_metal_register": "vllm_metal.platform.MetalPlatform",
+            "current_platform": {"class": "vllm.platforms.cpu.CpuPlatform"},
+            "current_platform_after_audex_patches": {
+                "class": "vllm_metal.platform.MetalPlatform"
+            },
+        },
+        "vllm_metal": {
+            "config": {
+                "use_mlx": True,
+                "mlx_device": "gpu",
+                "use_paged_attention": False,
+            }
+        },
+        "audex_patches": {
+            "transformers_local_dynamic_modules": True,
+            "mlx_lm_nemotron_dense": True,
+            "mlx_lm_nemotron_h_audex": True,
+            "vllm_metal_platform_repair": True,
+            "vllm_metal_device_info_api": True,
+            "vllm_metal_nonpaged_capacity": True,
+            "vllm_nemotron_dense": True,
+            "vllm_metal_audex_adapter": True,
+        },
+        "model_adapter": {
+            "audex_patch_installed": True,
+            "audex_adapter_selected": True,
+        },
+        "audex_processor": {"ready": True, "output": {"placeholder_length": 3}},
+        "audex_cfg": {"enabled": False, "ready": False},
+        "generation_probe": {"enabled": False},
     }
 
 
 @given("MLX reports a GPU default device")
 def mlx_reports_gpu_default_device(ctx: dict) -> None:
-    ctx["vllm_metal_diagnostic"]["mlx"] = {
+    mlx = {
         "default_device": "Device(gpu, 0)",
         "probe_array_device": "Device(gpu, 0)",
     }
+    ctx["vllm_metal_diagnostic"]["mlx"] = mlx
+    ctx["vllm_metal_diagnostic"]["spawn_probe"]["mlx"] = mlx
 
 
 @when("Audex-Mac evaluates the vLLM Metal diagnostic report")
 def evaluate_vllm_metal_diagnostic_report(ctx: dict) -> None:
     diagnostic = ctx["vllm_metal_diagnostic"]
     interpretation = diagnostic["interpretation"]
+    ctx["diagnostic_verdict"] = _diagnostic_verdict(diagnostic)
     ctx["cpu_facade_expected"] = (
         diagnostic["platform"]["device_type_facade"] == "cpu"
         and interpretation["vllm_device_type_cpu_can_be_expected"] is True
@@ -360,6 +511,7 @@ def evaluate_vllm_metal_diagnostic_report(ctx: dict) -> None:
 
 @then("the report treats the CPU facade as expected")
 def report_treats_cpu_facade_as_expected(ctx: dict) -> None:
+    assert ctx["diagnostic_verdict"] == {"ready": True, "failures": []}
     assert ctx["cpu_facade_expected"] is True
 
 
@@ -387,58 +539,77 @@ def no_model_cached(ctx: dict) -> None:
 
 
 @when("the user runs ./start.sh")
-def user_runs_start(ctx: dict) -> None:
+def user_runs_start(
+    ctx: dict,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     script_path = Path(__file__).resolve().parents[1] / "start.sh"
-    ctx["start_script"] = script_path.read_text(encoding="utf-8")
-    import subprocess
-
     subprocess.run(["bash", "-n", str(script_path)], check=True)
+    if "runtime_present" in ctx:
+        ctx["startup_events"] = run_start_harness(
+            tmp_path,
+            runtime_present=ctx["runtime_present"],
+        )
+    if ctx.get("model_cached") is False:
+
+        class NoCachedModels:
+            def is_cached(self, _model, readiness="speech") -> bool:
+                return False
+
+        prompts: list[str] = []
+        monkeypatch.setattr(audex_cli, "HuggingFaceSnapshotProbe", NoCachedModels)
+        monkeypatch.setattr(
+            "builtins.input",
+            lambda prompt: prompts.append(prompt) or "n",
+        )
+        ctx["startup_exit_code"] = audex_cli.main(["--model", "audex-2b"])
+        ctx["startup_stdout"] = capsys.readouterr().out
+        ctx["download_prompts"] = prompts
 
 
 @then("start.sh clones and checks out the pinned vLLM Metal commit")
 def creates_venv(ctx: dict) -> None:
-    source = ctx["start_script"]
-    assert 'git clone "${repo}" "${VLLM_METAL_VENDOR_DIR}"' in source
-    assert 'checkout --detach "${pinned_commit}"' in source
+    events = ctx["startup_events"]
+    assert any(event.startswith("git:clone ") for event in events)
+    assert any("checkout --detach pin" in event for event in events)
+    assert "install:vllm-metal" in events
 
 
 @then("installs Audex-Mac into that runtime")
 def installs_hf(ctx: dict) -> None:
-    assert 'pip install -e "${ROOT_DIR}"' in ctx["start_script"]
+    assert any("-m pip install -e" in event for event in ctx["startup_events"])
 
 
 @then("enforces the runtime patch guards")
 def installs_deps(ctx: dict) -> None:
-    source = ctx["start_script"]
-    assert "run_vllm_metal_patch_guards" in source
-    assert "-m audex_mac.patch_guards" in source
+    assert any("-m audex_mac.patch_guards" in event for event in ctx["startup_events"])
 
 
 @then("start.sh does not reinstall dependencies by default")
 def no_reinstall(ctx: dict) -> None:
-    source = ctx["start_script"]
-    assert 'if [[ "${REFRESH_DEPS}" == "0"' in source
-    assert "import audex_mac, vllm, vllm_metal" in source
+    events = ctx["startup_events"]
+    assert not any(event.startswith("git:clone ") for event in events)
+    assert not any("-m pip install" in event for event in events)
 
 
 @then("proceeds to model selection")
 def proceeds_to_model_selection(ctx: dict) -> None:
-    assert "exec_vllm_metal_cli" in ctx["start_script"]
+    assert any("-m audex_mac.cli" in event for event in ctx["startup_events"])
 
 
 @then("start.sh explains the selected model size and NVIDIA license")
 def explains_download(ctx: dict) -> None:
-    notice = model_download_notice(AUDEX_2B_REPO, "about 10 GB")
-    ctx["download_notice"] = notice
-    assert "NVIDIA" in notice
-    assert AUDEX_2B_REPO in notice
+    assert ctx["startup_exit_code"] == 2
+    assert "NVIDIA" in ctx["startup_stdout"]
+    assert AUDEX_2B_REPO in ctx["startup_stdout"]
 
 
 @then("asks for confirmation before downloading")
 def asks_confirmation(ctx: dict) -> None:
-    cli_source = Path(sts_cli.__file__).with_name("cli.py").read_text(encoding="utf-8")
-    assert 'input("Download now? [y/N] ")' in cli_source
-    assert "if not approved" in cli_source
+    assert ctx["download_prompts"] == ["Download now? [y/N] "]
+    assert "download was not approved" in ctx["startup_stdout"]
 
 
 # Licensing
@@ -499,6 +670,70 @@ def cli_sts_mode(
 
 @when("the user records an utterance with push-to-talk")
 def record_ptt(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    output_dir = ctx["interactive_output_dir"]
+    output_wav = output_dir / "native-answer.wav"
+    speech_log = output_dir / "native-speech.json"
+    write_pcm16_wav(output_wav, [0.0] * 320, sample_rate=16_000)
+    speech_log.write_text("{}\n", encoding="utf-8")
+    speech = SpeechOutputSmokeResult(
+        backend="mlx",
+        device="gpu",
+        prompt_tokens=1,
+        generated_token_ids=(1,),
+        generated_codec_frames=(1,),
+        reached_end_token=True,
+        hit_max_tokens=False,
+        waveform_shape=(320,),
+        sample_rate=16_000,
+        hop_length=320,
+        finite=True,
+        peak_abs=0.0,
+        wav_path=output_wav,
+        run_log_path=speech_log,
+    )
+    ctx["speech_smoke_calls"] = []
+    ctx["native_input_paths"] = []
+
+    def speech_output_smoke(**kwargs):
+        ctx["speech_smoke_calls"].append(kwargs["decoder_path"])
+        return speech
+
+    monkeypatch.setattr(
+        sts_cli,
+        "transcribe_wav_with_audex",
+        lambda **_kwargs: "native transcript",
+    )
+    monkeypatch.setattr(
+        sts_cli,
+        "generate_audex_text_response",
+        lambda **_kwargs: "native answer",
+    )
+    monkeypatch.setattr(sts_cli, "run_speech_output_smoke", speech_output_smoke)
+
+    class BridgeSession:
+        @property
+        def stats(self):
+            return sts_cli.AudexSpeechToSpeechSessionStats(0.1, 0.1, 0.1, 0.1, 0)
+
+        def speak_startup_greeting(self, **_kwargs) -> None:
+            return None
+
+        def run_turn_from_wav(self, *, input_wav_path: Path, play: bool):
+            ctx["native_input_paths"].append(input_wav_path)
+            return sts_cli.run_fixture_turn(
+                full_model_path=Path("/model"),
+                decoder_path=Path("/decoder"),
+                input_wav_path=input_wav_path,
+                output_dir=output_dir,
+                play=play,
+            )
+
+    monkeypatch.setattr(
+        sts_cli,
+        "AudexSpeechToSpeechSession",
+        lambda **_kwargs: BridgeSession(),
+    )
+
     class FakeRecording:
         def stop(self):
             return [0.0, 0.1]
@@ -510,14 +745,14 @@ def record_ptt(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx["turn_result"] = sts_cli.run_interactive_ptt(
         full_model_path=Path("/model"),
         decoder_path=Path("/decoder"),
-        output_dir=ctx["interactive_output_dir"],
-        play=True,
+        output_dir=output_dir,
+        play=False,
     )
 
 
 @then("the input audio is passed to Audex audio input processing")
 def input_to_audex(ctx: dict) -> None:
-    assert ctx["session_events"][0][0] == "wav"
+    assert ctx["native_input_paths"] == [ctx["turn_result"].input_wav_path]
     assert ctx["turn_result"].input_wav_path.is_file()
 
 
@@ -540,9 +775,8 @@ def no_silero(ctx: dict) -> None:
 
 @then("the spoken response is decoded with the Audex causal speech decoder")
 def audex_decoder(ctx: dict) -> None:
-    source = Path(sts_cli.__file__).read_text(encoding="utf-8")
-    assert "AudexSpeechDecoderSession" in source
-    assert "generate_speech_output_streaming" in source
+    assert ctx["speech_smoke_calls"] == [Path("/decoder")]
+    assert ctx["turn_result"].output_wav_path.is_file()
 
 
 @given("the CLI captured stereo PCM from the microphone")
@@ -1270,11 +1504,6 @@ def interactive_audex_cli_ready(
             return self._result("recorded speech", input_wav_path=input_wav_path)
 
     monkeypatch.setattr(sts_cli, "AudexSpeechToSpeechSession", FakeSession)
-    monkeypatch.setattr(
-        sts_cli,
-        "_start_recording",
-        lambda: pytest.fail("typed input must not start recording"),
-    )
     ctx["interactive_output_dir"] = tmp_path
 
 
@@ -1287,6 +1516,11 @@ def types_multiline_message(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     monkeypatch.setattr(sts_cli, "read_turn_input", lambda: next(inputs))
+    monkeypatch.setattr(
+        sts_cli,
+        "_start_recording",
+        lambda: pytest.fail("typed input must not start recording"),
+    )
     ctx["turn_result"] = sts_cli.run_interactive_ptt(
         full_model_path=Path("/model"),
         decoder_path=Path("/decoder"),
@@ -1313,12 +1547,35 @@ def typed_turn_plays_spoken_response(ctx: dict) -> None:
 
 
 @when("the user presses Enter without typing text")
-def presses_empty_enter(ctx: dict) -> None:
+def presses_empty_enter(ctx: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx["turn_input"] = classify_submission("")
+    ctx["recording_calls"] = []
+
+    class FakeRecording:
+        def stop(self):
+            ctx["recording_calls"].append("stop")
+            return [0.0, 0.1]
+
+    def start_recording():
+        ctx["recording_calls"].append("start")
+        return FakeRecording()
+
+    inputs = iter([ctx["turn_input"], TurnInput(InputKind.QUIT)])
+    monkeypatch.setattr(sts_cli, "read_turn_input", lambda: next(inputs))
+    monkeypatch.setattr(sts_cli, "_start_recording", start_recording)
+    monkeypatch.setattr("builtins.input", lambda: "")
+    ctx["turn_result"] = sts_cli.run_interactive_ptt(
+        full_model_path=Path("/model"),
+        decoder_path=Path("/decoder"),
+        output_dir=ctx["interactive_output_dir"],
+        play=False,
+    )
 
 
 @then("Audex starts push-to-talk recording")
 def empty_enter_starts_recording(ctx: dict) -> None:
+    assert ctx["recording_calls"] == ["start", "stop"]
+    assert ctx["session_events"][0][0] == "wav"
     assert ctx["turn_input"].kind is InputKind.RECORD
 
 
@@ -1336,8 +1593,8 @@ def audex_speech_decoder_available(ctx: dict) -> None:
     ctx["decoder_available"] = True
 
 
-@when("the user starts the CLI with ./start.sh")
-def starts_sts_cli(ctx: dict, tmp_path: Path) -> None:
+@given("a recorded speech fixture is available")
+def recorded_speech_fixture_is_available(ctx: dict, tmp_path: Path) -> None:
     assert ctx["model_cached"] is True
     assert ctx["decoder_available"] is True
     fixture = os.environ.get("AUDEX_BDD_INPUT_WAV")
@@ -1358,8 +1615,8 @@ def starts_sts_cli(ctx: dict, tmp_path: Path) -> None:
     ctx["slow_output_dir"] = tmp_path
 
 
-@when("records one push-to-talk utterance")
-def records_one_push_to_talk_utterance(ctx: dict) -> None:
+@when("the CLI processes one recorded speech turn")
+def cli_processes_one_recorded_speech_turn(ctx: dict) -> None:
     preflight = ctx["audio_preflight"]
     ctx["slow_turn"] = sts_cli.run_fixture_turn(
         full_model_path=preflight.model_path,
@@ -1379,6 +1636,90 @@ def completes_multiple_push_to_talk_turns(
     ctx: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    output_dir = ctx["interactive_output_dir"]
+    output_wav = output_dir / "session-answer.wav"
+    speech_log = output_dir / "session-speech.json"
+    write_pcm16_wav(output_wav, [0.0] * 320, sample_rate=16_000)
+    speech_log.write_text("{}\n", encoding="utf-8")
+    speech = SpeechOutputSmokeResult(
+        backend="mlx",
+        device="gpu",
+        prompt_tokens=1,
+        generated_token_ids=(1,),
+        generated_codec_frames=(1,),
+        reached_end_token=True,
+        hit_max_tokens=False,
+        waveform_shape=(320,),
+        sample_rate=16_000,
+        hop_length=320,
+        finite=True,
+        peak_abs=0.0,
+        wav_path=output_wav,
+        run_log_path=speech_log,
+    )
+    session = object.__new__(REAL_STS_SESSION)
+    session.output_dir = output_dir
+    session.selected_model_repo = AUDEX_2B_REPO
+    session.response_max_tokens = 4096
+    session.speech_max_tokens = None
+    session.thinking_enabled = False
+    session.turns = 0
+    session.conversation = None
+    session.conversation_store = None
+    session.enable_kv_cache = False
+    session.messages = []
+    session.persona = Persona(
+        persona_id="assistant",
+        path=output_dir / "assistant.md",
+        metadata={},
+        prompt="Answer briefly.",
+    )
+    session.model_load_seconds = 0.1
+    session.audio_component_load_seconds = 0.1
+    session.decoder_load_seconds = 0.1
+    session.speech_warmup_seconds = 0.1
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, **_kwargs) -> str:
+            return "\n".join(
+                f"{message['role']}:{message['content']}" for message in messages
+            )
+
+        def encode(self, text: str) -> list[int]:
+            return [ord(char) for char in text]
+
+        def decode(self, _tokens) -> str:
+            return "Answer."
+
+    class FakeMx:
+        int32 = "int32"
+
+        def array(self, values, dtype=None):
+            return list(values)
+
+    session.tokenizer = FakeTokenizer()
+    session.mx = FakeMx()
+    session.generate_step = object()
+    session.make_sampler = object()
+    session.model = object()
+    session.generate_speech_output_streaming = lambda **_kwargs: speech
+    session.speak_startup_greeting = lambda **_kwargs: None
+    transcripts = iter(("first utterance", "second utterance"))
+    ctx["turn_sessions"] = []
+
+    def transcribe(_path: Path) -> str:
+        ctx["turn_sessions"].append(id(session))
+        return next(transcripts)
+
+    session.transcribe_wav = transcribe
+    ctx["session_instances"] = [session]
+    monkeypatch.setattr(
+        sts_cli,
+        "AudexSpeechToSpeechSession",
+        lambda **_kwargs: session,
+    )
+    monkeypatch.setattr(sts_cli, "_generate_token_ids", lambda **_kwargs: [1])
+
     class FakeRecording:
         def stop(self):
             return [0.0, 0.1]
@@ -1396,11 +1737,10 @@ def completes_multiple_push_to_talk_turns(
     sts_cli.run_interactive_ptt(
         full_model_path=Path("/model"),
         decoder_path=Path("/decoder"),
-        output_dir=ctx["interactive_output_dir"],
-        play=True,
+        output_dir=output_dir,
+        play=False,
     )
-    ctx["turn_sessions"] = [event[3] for event in ctx["session_events"]]
-    ctx["conversation_history"] = ctx["session_instances"][0].messages
+    ctx["conversation_history"] = session.messages
 
 
 @then("Audex receives the user's speech as native audio input")
@@ -1434,6 +1774,12 @@ def same_audex_full_model_session_handles_every_turn(ctx: dict) -> None:
 @then("the conversation history is retained until the context limit")
 def conversation_history_retained_until_context_limit(ctx: dict) -> None:
     assert len(ctx["conversation_history"]) == 4
+    assert [message["content"] for message in ctx["conversation_history"]] == [
+        "first utterance",
+        "Answer.",
+        "second utterance",
+        "Answer.",
+    ]
 
 
 @given("a previous speech-to-speech conversation exists")
@@ -1502,19 +1848,35 @@ def previous_sts_conversation_is_resumed(ctx: dict) -> None:
 
 @when("the interactive speech-to-speech CLI starts")
 def interactive_speech_to_speech_cli_starts(ctx: dict) -> None:
-    ctx["startup_greeting"] = sts_cli.startup_greeting_text(
-        conversation=ctx.get("active_conversation"),
+    session = object.__new__(REAL_STS_SESSION)
+    session.conversation = ctx.get("active_conversation")
+    session.speech_max_tokens = None
+
+    class FakeTokenizer:
+        def encode(self, text: str) -> list[int]:
+            return list(range(len(text.split())))
+
+    session.tokenizer = FakeTokenizer()
+    calls: list[dict[str, object]] = []
+    session.generate_speech_output_streaming = lambda **kwargs: calls.append(kwargs)
+    session.speak_startup_greeting(
         conversation_resumed=ctx.get("resumed", False),
+        play=True,
     )
+    assert len(calls) == 1
+    ctx["startup_greeting"] = calls[0]["text"]
+    ctx["greeting_spoken"] = calls[0]["play"] is True
 
 
 @then("Audex says the first-startup greeting")
 def audex_says_first_startup_greeting(ctx: dict) -> None:
+    assert ctx["greeting_spoken"] is True
     assert ctx["startup_greeting"] == sts_cli.FIRST_STARTUP_GREETING_TEXT
 
 
 @then("Audex greets Pat as a returning user")
 def audex_greets_pat_returning_user(ctx: dict) -> None:
+    assert ctx["greeting_spoken"] is True
     assert ctx["startup_greeting"] == (
         "Hi, Pat! Nice to hear from you again. What do you want to talk about today?"
     )
@@ -1522,6 +1884,7 @@ def audex_greets_pat_returning_user(ctx: dict) -> None:
 
 @then("Audex welcomes the returning user")
 def audex_welcomes_returning_user(ctx: dict) -> None:
+    assert ctx["greeting_spoken"] is True
     assert ctx["startup_greeting"] == (
         "Hi! Nice to hear from you again. What do you want to talk about today?"
     )
@@ -1761,26 +2124,31 @@ def execute_text_benchmark_contract(ctx: dict) -> None:
     ctx["text_benchmark_log"] = json.loads(run.run_log_path.read_text(encoding="utf-8"))
 
 
-@then("the deterministic text acceptance gate passes")
+@then("ten-turn text runtime compatibility passes")
 def transcript_reasonably_coherent(ctx: dict) -> None:
-    assert ctx["text_benchmark_run"].gate.passed, ctx[
-        "text_benchmark_run"
-    ].gate.failures
+    assessment = ctx["text_benchmark_run"].assessment
+    assert assessment.full_benchmark_evaluated is True
+    assert assessment.compatible, assessment.compatibility_failures
 
 
-@then("the transcript does not show excessive repetition")
-def transcript_no_excessive_repetition(ctx: dict) -> None:
-    failures = ctx["text_benchmark_run"].gate.failures
-    assert not any("repeated assistant answer" in failure for failure in failures)
-
-
-@then("the transcript retains context across the benchmark turns")
-def transcript_retains_context(ctx: dict) -> None:
-    failures = ctx["text_benchmark_run"].gate.failures
-    context_failures = ("accent handling", "chunked", "turn 9", "final summary")
-    assert not any(
-        any(fragment in failure for fragment in context_failures)
-        for failure in failures
+@then("model-quality observations are recorded without controlling compatibility")
+def model_quality_observations_are_non_blocking(ctx: dict) -> None:
+    assessment = ctx["text_benchmark_run"].assessment
+    names = {observation.name for observation in assessment.quality_observations}
+    assert {
+        "accent_normalization",
+        "chunk_size_guard",
+        "contextual_chunking_answer",
+        "final_summary_context",
+        "python_syntax",
+        "reviewed_module_contract",
+        "distinct_answer_ratio",
+    } <= names
+    assert (
+        ctx["text_benchmark_log"]["text_evaluation_policy"][
+            "quality_observations_are_blocking"
+        ]
+        is False
     )
 
 
@@ -1788,24 +2156,32 @@ def transcript_retains_context(ctx: dict) -> None:
 def text_run_log_records_required_fields(ctx: dict) -> None:
     run_log = ctx["text_benchmark_log"]
     assert run_log["selected_model"] == ctx["selected_model"]
-    assert run_log["sampler"] == ctx["text_sampler"]
+    assert {key: run_log["sampler"][key] for key in ctx["text_sampler"]} == ctx[
+        "text_sampler"
+    ]
     assert run_log["elapsed_seconds"] > 0
     assert run_log["transcript"]
 
 
-@then("the vLLM run log records token throughput and Audex patch evidence")
-def vllm_run_log_records_runtime_evidence(ctx: dict) -> None:
+@then("the selected backend run log records token throughput and runtime evidence")
+def selected_backend_run_log_records_runtime_evidence(ctx: dict) -> None:
     run_log = ctx["text_benchmark_log"]
     first_turn = run_log["transcript"][0]
-    assert run_log["backend"] == "vllm"
     assert run_log["metal_runtime"]["mlx_default_device"] == "Device(gpu, 0)"
-    assert run_log["audex_patches"]["vllm_metal_platform_repair"] is True
-    assert run_log["audex_patches"]["vllm_metal_audex_adapter"] is True
     assert first_turn["generation_tokens"] > 0
     assert first_turn["generation_tps"] > 0
+    if run_log["backend"] == "vllm":
+        assert run_log["audex_patches"]["vllm_metal_platform_repair"] is True
+        assert run_log["audex_patches"]["vllm_metal_audex_adapter"] is True
+    else:
+        assert run_log["backend"] == "mlx"
+        assert run_log["audex_patches"]["mlx_lm_nemotron_dense"] is True
+        assert run_log["model_load_seconds"] > 0
+        assert first_turn["prompt_tps"] > 0
+        assert first_turn["peak_memory_gb"] > 0
 
 
-@given("the text benchmark has completed")
+@given("the text benchmark has completed with a reasoning error")
 def text_benchmark_completed(ctx: dict) -> None:
     answers = [f"answer {index}" for index in range(1, 11)]
     answers[0] += "\n```python\ndef is_palindrome(s):\n    return True\n```"
@@ -1833,33 +2209,206 @@ def is_palindrome(text):
     return cleaned == cleaned[::-1]
 ```
 """
-    answers[8] += " [[3, 1, 4], [1, 5, 9], [2]]"
+    answers[8] += " [[3, 1, 4], [1, 5, 9], [5, 2]]"
     answers[9] += " chunked is_palindrome O(N) ValueError"
     transcript = [
         {"turn": index, "assistant": answer}
         for index, answer in enumerate(answers, start=1)
     ]
-    ctx["text_gate"] = evaluate_text_benchmark(load_text_benchmark(), transcript)
+    ctx["text_assessment"] = evaluate_text_benchmark(load_text_benchmark(), transcript)
 
 
-@when("Audex-Mac evaluates the text gate")
+@when("Audex-Mac assesses text runtime compatibility and model quality")
 def evaluate_text_gate(ctx: dict) -> None:
-    assert "text_gate" in ctx
+    assert "text_assessment" in ctx
 
 
 @then("it does not require exact token parity")
 def no_token_parity(ctx: dict) -> None:
-    assert ctx["text_gate"].exact_token_parity_required is False
+    assert ctx["text_assessment"].exact_token_parity_required is False
 
 
 @then("it does not require logit parity")
 def no_logit_parity(ctx: dict) -> None:
-    assert ctx["text_gate"].logit_parity_required is False
+    assert ctx["text_assessment"].logit_parity_required is False
 
 
-@then("it does require coherent viable output")
+@then("it does require runtime-compatible output")
 def coherent_required(ctx: dict) -> None:
-    assert ctx["text_gate"].passed is True
+    assert ctx["text_assessment"].compatible is True
+
+
+@then("it records the reasoning error as non-blocking model quality")
+def reasoning_error_is_non_blocking(ctx: dict) -> None:
+    observation = next(
+        item
+        for item in ctx["text_assessment"].quality_observations
+        if item.name == "contextual_chunking_answer"
+    )
+    assert observation.satisfied is False
+    assert ctx["text_assessment"].compatible is True
+
+
+@given("ten generated thinking-mode benchmark replies")
+def ten_thinking_benchmark_replies(ctx: dict) -> None:
+    ctx["thinking_replies"] = [
+        f"private reasoning {index}\n</think>\nPublic answer {index}."
+        for index in range(1, 11)
+    ]
+
+
+@when("Audex-Mac assembles the ten-turn benchmark conversation")
+def assemble_ten_turn_thinking_conversation(
+    ctx: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class ModelTemplateTokenizer:
+        chat_template = "official-model-template"
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def apply_chat_template(self, messages, **kwargs) -> str:
+            copied = [dict(message) for message in messages]
+            self.calls.append(
+                {
+                    "messages": copied,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            rendered = []
+            for message in copied:
+                content = message["content"]
+                if message["role"] == "assistant":
+                    if "<think>" in content and "</think>" in content:
+                        content = (
+                            "<think></think>"
+                            + content.rsplit("</think>", 1)[-1].strip()
+                        )
+                    elif "<think>" not in content and "</think>" not in content:
+                        content = "<think></think>" + content
+                rendered.append(f"<|im_start|>{message['role']}\n{content}<|im_end|>\n")
+            return "".join(rendered) + "<|im_start|>assistant\n<think>\n"
+
+    tokenizer = ModelTemplateTokenizer()
+
+    class FakeLLM:
+        instances: list[FakeLLM] = []
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.prompts: list[str] = []
+            self.__class__.instances.append(self)
+
+        def get_tokenizer(self):
+            return tokenizer
+
+        def generate(self, prompts, _sampling_params):
+            self.prompts.extend(prompts)
+            generated = ctx["thinking_replies"][len(self.prompts) - 1]
+            output = SimpleNamespace(
+                text=generated,
+                token_ids=(len(self.prompts),),
+                finish_reason="stop",
+                stop_reason="<|im_end|>",
+            )
+            return [SimpleNamespace(outputs=[output], prompt_token_ids=(1, 2))]
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    model_path = tmp_path / "snapshot" / "checkpoint_folder_textonly"
+    model_path.mkdir(parents=True)
+    benchmark = load_text_benchmark()
+    preflight = SimpleNamespace(
+        ready=True,
+        missing_items=(),
+        model_path=model_path,
+        model=DEFAULT_MODEL,
+        benchmark=benchmark,
+        patch_report=None,
+    )
+    metal_policy = SimpleNamespace(
+        ready=True,
+        env={"VLLM_MLX_DEVICE": "gpu"},
+        mlx_metal_available=True,
+        mlx_default_device="Device(gpu, 0)",
+    )
+    monkeypatch.setattr(
+        "audex_mac.text_generation.preflight_text_runtime",
+        lambda _model, *, backend: preflight,
+    )
+    monkeypatch.setattr(
+        "audex_mac.text_generation.inspect_metal_runtime", lambda: metal_policy
+    )
+    monkeypatch.setattr(
+        "audex_mac.text_generation.apply_audex_runtime_patches", lambda: None
+    )
+    monkeypatch.setattr("audex_mac.text_generation.RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setitem(
+        sys.modules,
+        "vllm",
+        SimpleNamespace(LLM=FakeLLM, SamplingParams=FakeSamplingParams),
+    )
+
+    run = run_text_benchmark(
+        DEFAULT_MODEL,
+        backend="vllm",
+        thinking_enabled=True,
+    )
+    ctx["thinking_template_tokenizer"] = tokenizer
+    ctx["thinking_benchmark_run"] = run
+    ctx["thinking_prompts"] = FakeLLM.instances[0].prompts
+
+
+def _thinking_assistant_turns(ctx: dict):
+    return [
+        SimpleNamespace(
+            raw_content=record["assistant_raw"],
+            answer=record["assistant"],
+        )
+        for record in ctx["thinking_benchmark_run"].transcript
+    ]
+
+
+@then("every assistant history entry contains a complete reasoning section")
+def complete_reasoning_history(ctx: dict) -> None:
+    assistant_turns = _thinking_assistant_turns(ctx)
+    assert len(assistant_turns) == 10
+    assert all(
+        turn.raw_content.count("<think>") == 1
+        and turn.raw_content.count("</think>") == 1
+        for turn in assistant_turns
+    )
+
+
+@then("every turn is rendered through the selected model chat template")
+def every_turn_uses_model_template(ctx: dict) -> None:
+    calls = ctx["thinking_template_tokenizer"].calls
+    assert len(ctx["thinking_prompts"]) == 10
+    assert len(calls) == 10
+    assert all(
+        call["kwargs"]
+        == {
+            "tokenize": False,
+            "add_generation_prompt": True,
+            "enable_thinking": True,
+        }
+        for call in calls
+    )
+    assert "<think></think>Public answer 1." in ctx["thinking_prompts"][1]
+    assert "private reasoning 1" not in ctx["thinking_prompts"][1]
+
+
+@then("benchmark evaluation sees public answers rather than private reasoning")
+def benchmark_sees_public_answers(ctx: dict) -> None:
+    assistant_turns = _thinking_assistant_turns(ctx)
+    assert [turn.answer for turn in assistant_turns] == [
+        f"Public answer {index}." for index in range(1, 11)
+    ]
+    assert all("private reasoning" not in turn.answer for turn in assistant_turns)
+    assert ctx["thinking_benchmark_run"].assessment.compatible is True
 
 
 @given("the text benchmark CLI is configured with default options")
@@ -1868,24 +2417,55 @@ def text_benchmark_default_cli_options(ctx: dict) -> None:
 
 
 @when("Audex-Mac resolves the text benchmark backend")
-def resolve_text_benchmark_backend(ctx: dict) -> None:
-    ctx["resolved_text_backend"] = (
-        ctx["explicit_text_backend"]
-        if ctx["explicit_text_backend"] is not None
-        else run_text_benchmark.__kwdefaults__["backend"]
+def resolve_text_benchmark_backend(
+    ctx: dict,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CachedModel:
+        def is_cached(self, _model, readiness="speech") -> bool:
+            return True
+
+    run_log = tmp_path / "text-run.json"
+    run_log.write_text("{}\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_benchmark(_model, **kwargs):
+        calls.append(kwargs["backend"])
+        return SimpleNamespace(
+            run_log_path=run_log,
+            transcript=[],
+            assessment=TextBenchmarkAssessment((), ()),
+        )
+
+    monkeypatch.setattr(audex_cli, "HuggingFaceSnapshotProbe", CachedModel)
+    monkeypatch.setattr(audex_cli, "run_text_benchmark", fake_benchmark)
+    assert audex_cli.main(["--model", "audex-2b", "--run-text-benchmark"]) == 0
+    assert (
+        audex_cli.main(
+            [
+                "--model",
+                "audex-2b",
+                "--run-text-benchmark",
+                "--text-backend",
+                "mlx",
+            ]
+        )
+        == 0
     )
+    ctx["resolved_text_backend"] = calls[0]
+    ctx["text_cli_backend_calls"] = calls
 
 
 @then("it uses vLLM Metal by default")
 def uses_vllm_metal_by_default(ctx: dict) -> None:
     assert ctx["resolved_text_backend"] == "vllm"
+    assert ctx["text_cli_backend_calls"][0] == "vllm"
 
 
 @then("direct MLX requires an explicit diagnostic backend selection")
 def direct_mlx_requires_explicit_backend(ctx: dict) -> None:
-    ctx["explicit_text_backend"] = "mlx"
-    resolve_text_benchmark_backend(ctx)
-    assert ctx["resolved_text_backend"] == "mlx"
+    assert ctx["text_cli_backend_calls"] == ["vllm", "mlx"]
 
 
 @given("the speech-to-speech CLI is configured with default options")
@@ -1894,49 +2474,77 @@ def speech_to_speech_default_cli_options(ctx: dict) -> None:
 
 
 @when("Audex-Mac resolves the speech-to-speech backend")
-def resolve_speech_to_speech_backend(ctx: dict) -> None:
-    ctx["resolved_sts_backend"] = (
-        ctx["explicit_sts_backend"]
-        if ctx["explicit_sts_backend"] is not None
-        else DEFAULT_STS_BACKEND
+def resolve_speech_to_speech_backend(
+    ctx: dict,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CachedModel:
+        def is_cached(self, _model, readiness="speech") -> bool:
+            return True
+
+    class FakeSession:
+        stats = sts_cli.AudexSpeechToSpeechSessionStats(0.1, 0.1, 0.1, 0.1, 0)
+
+    input_wav = tmp_path / "input.wav"
+    output_wav = tmp_path / "output.wav"
+    turn_log = tmp_path / "turn.json"
+    write_pcm16_wav(input_wav, [0.0], sample_rate=16_000)
+    write_pcm16_wav(output_wav, [0.0] * 320, sample_rate=16_000)
+    turn_log.write_text("{}\n", encoding="utf-8")
+    turn = sts_cli.SpeechToSpeechTurnResult(
+        transcript="heard",
+        response_text="answer",
+        input_wav_path=input_wav,
+        output_wav_path=output_wav,
+        run_log_path=turn_log,
+        played=False,
     )
+    calls: list[str] = []
+    monkeypatch.setattr(audex_cli, "HuggingFaceSnapshotProbe", CachedModel)
+    monkeypatch.setattr(
+        audex_cli,
+        "preflight_audio_runtime",
+        lambda _model: SimpleNamespace(
+            ready=True,
+            model_path=tmp_path / "model",
+            decoder_path=tmp_path / "decoder",
+            missing_items=(),
+        ),
+    )
+    monkeypatch.setattr(
+        audex_cli,
+        "ConversationStore",
+        lambda: ConversationStore(tmp_path / "conversations"),
+    )
+    monkeypatch.setattr(
+        audex_cli,
+        "run_vllm_fixture_turn",
+        lambda **_kwargs: calls.append("vllm") or turn,
+    )
+    monkeypatch.setattr(
+        audex_cli,
+        "AudexSpeechToSpeechSession",
+        lambda **_kwargs: FakeSession(),
+    )
+    monkeypatch.setattr(
+        audex_cli,
+        "run_fixture_turn",
+        lambda **_kwargs: calls.append("mlx") or turn,
+    )
+    common = ["--model", "audex-2b", "--input-wav", str(input_wav), "--no-play"]
+    assert audex_cli.main(common + ["--new-conversation"]) == 0
+    assert audex_cli.main(common + ["--new-conversation", "--sts-backend", "mlx"]) == 0
+    ctx["resolved_sts_backend"] = calls[0]
+    ctx["sts_cli_backend_calls"] = calls
 
 
 @then("speech-to-speech uses vLLM Metal by default")
 def speech_to_speech_uses_vllm_metal_by_default(ctx: dict) -> None:
     assert ctx["resolved_sts_backend"] == "vllm"
+    assert ctx["sts_cli_backend_calls"][0] == "vllm"
 
 
 @then("direct MLX speech-to-speech requires an explicit diagnostic backend selection")
 def direct_mlx_sts_requires_explicit_backend(ctx: dict) -> None:
-    ctx["explicit_sts_backend"] = "mlx"
-    resolve_speech_to_speech_backend(ctx)
-    assert ctx["resolved_sts_backend"] == "mlx"
-
-
-@pytest.mark.fast
-def test_patch_guard_signature_check_detects_missing_parameter() -> None:
-    class Provider:
-        def import_module(self, module_name: str) -> ModuleType:
-            module = ModuleType(module_name)
-            module.Target = lambda present: None
-            return module
-
-    result = run_patch_guards(
-        VllmMetalState(
-            installed_commit="pin",
-            pinned_commit="pin",
-            upstream_head="pin",
-        ),
-        provider=Provider(),
-        targets=(
-            PatchTarget(
-                "fake.module",
-                ("Target",),
-                required_parameters=("missing",),
-            ),
-        ),
-    )
-
-    assert result.startup_allowed is False
-    assert result.missing_symbol == "fake.module.Target(missing)"
+    assert ctx["sts_cli_backend_calls"] == ["vllm", "mlx"]

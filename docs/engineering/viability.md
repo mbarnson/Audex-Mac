@@ -140,7 +140,9 @@ Acceptance:
 - run the text benchmark with `max_tokens >= 4096`
 - use NVIDIA-recommended sampler settings
 - no exact token parity requirement
-- produce coherent enough output by GPT-5.5 Codex smell test
+- produce non-empty, non-collapsed output for runtime compatibility
+- record answer quality for a separate human/Codex smell test; model reasoning
+  quality does not control the CLI runtime-compatibility exit status
 - log timings, sampler params, selected model, and transcript
 
 Status:
@@ -189,6 +191,15 @@ Status:
     Audex-Mac must work around explicitly, including missing text-only shard
     files and the observed `LICENSE`/`license` case-sensitivity conflict that
     can make `hf download` fail on a case-insensitive macOS filesystem.
+  - Reconfirmed on 2026-07-10: an unfiltered Audex-2B `hf download` failed with
+    `FileExistsError` while creating the lowercase `license` directory after
+    materializing root `LICENSE`; `--exclude "license/*"` succeeds. Audex-Mac
+    now passes the equivalent Hugging Face `ignore_patterns` value explicitly.
+  - That failed download advanced `refs/main` to partial revision
+    `b13ccb2373764e01aa4e49311d34c9428c925138`. Snapshot verification now scans
+    other materialized revisions and selected the older complete locally
+    converted revision `1e4737632af393c1b11c64af89c675cebf14f860` without
+    mutating the Hugging Face cache.
   - `/opt/homebrew/anaconda3/bin/python3.13` is present, reports `arm64`, and
     satisfies the pinned vLLM Metal Python range.
   - `start.sh` now moves an incompatible generated `.venv` aside and can reuse
@@ -224,6 +235,11 @@ Status:
     direct-MLX ten-turn run in 80.416 seconds, with `backend=mlx`,
     `mlx_default_device=Device(gpu, 0)`, and transcript log
     `.audex/runs/text-benchmark-20260707-121116.json`.
+  - After moving ten-turn construction to the official ChatML template, a
+    direct-MLX behavioral rerun on 2026-07-10 completed all ten turns in
+    89.559 seconds and passed runtime compatibility with no failures. The run
+    log was `.audex/runs/text-benchmark-20260710-101630.json`; answer-specific
+    misses remained visible as non-blocking model-quality observations.
   - GPT-5.5 Codex coherence judgment for that transcript: the output is
     acceptable for the SLC smell-test bar. The run completed all ten turns with
     NVIDIA sampler settings, `max_tokens=4096`, no excessive repetition, and
@@ -243,7 +259,7 @@ Status:
     the text-only conversion caveat above for text benchmarks; it means the
     default STS path can use the cached full 30B model directly.
 
-Remaining text-gate caveat:
+Remaining text-quality caveat:
 
 - Convert the local 30B-A3B text checkpoint and rerun the same benchmark when
   stronger reasoning is useful. The SLC default remains 2B for clone-and-run

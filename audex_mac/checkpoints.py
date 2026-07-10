@@ -54,22 +54,38 @@ def repo_cache_dir(repo_id: str, cache_root: Path = HF_CACHE_ROOT) -> Path:
 def local_snapshot_path(repo_id: str, cache_root: Path = HF_CACHE_ROOT) -> Path | None:
     """Return a usable local snapshot, preferring refs/main when materialized."""
 
+    candidates = _local_snapshot_candidates(repo_id, cache_root=cache_root)
+    return candidates[0] if candidates else None
+
+
+def _local_snapshot_candidates(
+    repo_id: str,
+    *,
+    cache_root: Path,
+) -> tuple[Path, ...]:
+    """Return materialized snapshots with refs/main first, then newest first."""
+
     root = repo_cache_dir(repo_id, cache_root)
+    preferred: Path | None = None
     ref = root / "refs" / "main"
     if ref.is_file():
         revision = ref.read_text(encoding="utf-8").strip()
         if revision:
             snapshot = root / "snapshots" / revision
             if snapshot.is_dir():
-                return snapshot
+                preferred = snapshot
 
     snapshots_root = root / "snapshots"
     if not snapshots_root.is_dir():
-        return None
-    snapshots = [path for path in snapshots_root.iterdir() if path.is_dir()]
-    if not snapshots:
-        return None
-    return max(snapshots, key=lambda path: path.stat().st_mtime)
+        return (preferred,) if preferred is not None else ()
+    snapshots = sorted(
+        (path for path in snapshots_root.iterdir() if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if preferred is not None:
+        snapshots = [preferred, *(path for path in snapshots if path != preferred)]
+    return tuple(snapshots)
 
 
 def verify_indexed_checkpoint(path: Path) -> IndexedCheckpointCheck:
@@ -103,8 +119,8 @@ def verify_snapshot(
 ) -> SnapshotCheck:
     """Verify exact files and indexed shards for a local model snapshot."""
 
-    snapshot = local_snapshot_path(model.repo_id, cache_root=cache_root)
-    if snapshot is None:
+    candidates = _local_snapshot_candidates(model.repo_id, cache_root=cache_root)
+    if not candidates:
         return SnapshotCheck(
             model=model,
             snapshot_path=None,
@@ -113,6 +129,25 @@ def verify_snapshot(
             checkpoint_checks=(),
         )
 
+    checks = tuple(
+        _verify_snapshot_path(
+            model,
+            snapshot,
+            required_files=required_files,
+            checkpoint_dirs=checkpoint_dirs,
+        )
+        for snapshot in candidates
+    )
+    return next((check for check in checks if check.complete), checks[0])
+
+
+def _verify_snapshot_path(
+    model: AudexModel,
+    snapshot: Path,
+    *,
+    required_files: tuple[str, ...],
+    checkpoint_dirs: tuple[str, ...],
+) -> SnapshotCheck:
     missing_files = tuple(
         path for path in required_files if not (snapshot / path).exists()
     )

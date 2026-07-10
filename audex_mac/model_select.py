@@ -7,8 +7,10 @@ from typing import Literal, Protocol
 
 from .checkpoints import verify_snapshot
 from .models import DEFAULT_MODEL, HIGHER_REASONING_MODEL, SUPPORTED_MODELS, AudexModel
+from .text_chat import AUDEX_CHAT_TEMPLATE_RELATIVE_PATH
 
 ModelReadiness = Literal["speech", "text"]
+MACOS_CASE_COLLISION_IGNORE_PATTERNS = ("license/*",)
 
 
 class ModelCacheProbe(Protocol):
@@ -47,6 +49,7 @@ class HuggingFaceSnapshotProbe:
             snapshot_download(
                 repo_id=model.repo_id,
                 allow_patterns=list(allow_patterns),
+                ignore_patterns=list(MACOS_CASE_COLLISION_IGNORE_PATTERNS),
                 local_files_only=True,
             )
         except Exception:
@@ -127,10 +130,11 @@ def _readiness_requirements(
                 model.required_patterns,
             )
         return (
-            model.text_required_files,
+            model.text_required_files + (AUDEX_CHAT_TEMPLATE_RELATIVE_PATH,),
             model.text_checkpoint_dirs,
             (
                 "checkpoint_folder_textonly/*",
+                AUDEX_CHAT_TEMPLATE_RELATIVE_PATH,
                 "inference_scripts_vllm/textonly_scripts/*",
             ),
         )
@@ -152,5 +156,6 @@ def download_model_snapshot(
     snapshot_download(
         repo_id=model.repo_id,
         allow_patterns=list(allow_patterns),
+        ignore_patterns=list(MACOS_CASE_COLLISION_IGNORE_PATTERNS),
         local_files_only=False,
     )

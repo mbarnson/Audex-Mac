@@ -11,7 +11,7 @@ from audex_mac import cli
 from audex_mac.cli import DEFAULT_STS_BACKEND, DEFAULT_TEXT_BACKEND
 from audex_mac.speech_output import SpeechOutputSmokeResult
 from audex_mac.sts_cli import SpeechToSpeechTurnResult
-from audex_mac.text_gate import TextGateResult
+from audex_mac.text_gate import TextBenchmarkAssessment, TextQualityObservation
 from audex_mac.text_generation import run_text_benchmark
 
 pytestmark = pytest.mark.fast
@@ -156,7 +156,7 @@ def test_text_benchmark_defaults_to_vllm_backend() -> None:
     assert run_text_benchmark.__kwdefaults__["backend"] == "vllm"
 
 
-def test_text_benchmark_cli_returns_nonzero_when_acceptance_gate_fails(
+def test_text_benchmark_cli_reports_quality_miss_without_failing_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -174,7 +174,52 @@ def test_text_benchmark_cli_returns_nonzero_when_acceptance_gate_fails(
         lambda *_args, **_kwargs: SimpleNamespace(
             run_log_path=run_log,
             transcript=[{"assistant": "bad answer"}],
-            gate=TextGateResult(("turn 9 is incorrect",)),
+            assessment=TextBenchmarkAssessment(
+                compatibility_failures=(),
+                quality_observations=(
+                    TextQualityObservation(
+                        name="contextual_chunking_answer",
+                        satisfied=False,
+                        detail="turn 9 reasoning was incorrect",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = cli.main(["--model", "audex-2b", "--run-text-benchmark"])
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "Text runtime compatibility: passed" in stdout
+    assert (
+        "Model quality observation: contextual_chunking_answer: "
+        "turn 9 reasoning was incorrect" in stdout
+    )
+
+
+def test_text_benchmark_cli_returns_nonzero_for_runtime_incompatibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeProbe:
+        def is_cached(self, _model, readiness="speech") -> bool:
+            return True
+
+    run_log = tmp_path / "text.json"
+    run_log.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "HuggingFaceSnapshotProbe", FakeProbe)
+    monkeypatch.setattr(
+        cli,
+        "run_text_benchmark",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            run_log_path=run_log,
+            transcript=[{"assistant": ""}],
+            assessment=TextBenchmarkAssessment(
+                compatibility_failures=("turn 1 generated no text",),
+                quality_observations=(),
+            ),
         ),
     )
 
@@ -182,8 +227,8 @@ def test_text_benchmark_cli_returns_nonzero_when_acceptance_gate_fails(
 
     assert result == 2
     stdout = capsys.readouterr().out
-    assert "Text benchmark gate: failed" in stdout
-    assert "Gate failure: turn 9 is incorrect" in stdout
+    assert "Text runtime compatibility: failed" in stdout
+    assert "Compatibility failure: turn 1 generated no text" in stdout
 
 
 def test_cli_context_budget_is_bounded_to_demo_limit() -> None:

@@ -84,3 +84,34 @@ def test_local_snapshot_falls_back_when_ref_points_to_absent_revision(
     (repo_dir / "refs" / "main").write_text("absent", encoding="utf-8")
 
     assert local_snapshot_path(DEFAULT_MODEL.repo_id, cache_root=tmp_path) == snapshot
+
+
+def test_snapshot_verification_prefers_complete_older_snapshot_over_partial_ref(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "models--nvidia--Nemotron-Labs-Audex-2B"
+    partial = repo_dir / "snapshots" / "new-partial"
+    complete = repo_dir / "snapshots" / "older-complete"
+    (repo_dir / "refs").mkdir(parents=True)
+    (repo_dir / "refs" / "main").write_text("new-partial", encoding="utf-8")
+    for snapshot in (partial, complete):
+        checkpoint = snapshot / "checkpoint_folder_textonly"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "config.json").write_text("{}", encoding="utf-8")
+        (checkpoint / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": {"lm_head.weight": "model.safetensors"}}),
+            encoding="utf-8",
+        )
+    (complete / "checkpoint_folder_textonly" / "model.safetensors").write_bytes(
+        b"locally converted weights"
+    )
+
+    result = verify_snapshot(
+        DEFAULT_MODEL,
+        required_files=("checkpoint_folder_textonly/config.json",),
+        checkpoint_dirs=("checkpoint_folder_textonly",),
+        cache_root=tmp_path,
+    )
+
+    assert result.complete is True
+    assert result.snapshot_path == complete
