@@ -41,6 +41,7 @@ from .audio_evaluation_runner import (
     UnqualifiedOracleSuite,
 )
 from .audio_evaluation_suite import (
+    AUDIOCAPS_AUDIO_PIN,
     AUDIOCAPS_CAPTION_PIN,
     ESC50_PIN,
     MMAU_PIN,
@@ -287,6 +288,7 @@ def main(
                     MMAU_PIN,
                     ESC50_PIN,
                     AUDIOCAPS_CAPTION_PIN,
+                    AUDIOCAPS_AUDIO_PIN,
                     SONG_DESCRIBER_PIN,
                 )
             ],
@@ -321,6 +323,7 @@ def main(
         generation=AudexVllmTtaGenerationAdapter(
             runtime=runtime,
             raw_dir=run.run_dir / "media" / "raw",
+            enhanced_dir=run.run_dir / "media" / "enhanced",
             decode_to_wav=decoder,
         ),
         oracles=active_oracle_suite_factory(),

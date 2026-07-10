@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import wave
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,9 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     environment = json.loads((run_dir / "environment.json").read_text(encoding="utf-8"))
     assert manifest["tier"] == "smoke"
     assert manifest["case_count"] == 32
+    assert "OpenSound/AudioCaps" in {
+        dataset["repo_id"] for dataset in manifest["datasets"]
+    }
     assert manifest["model"]["size"] == "30b"
     assert manifest["model"]["context"] == {
         "checkpoint_max_position_embeddings": None,
@@ -545,6 +549,17 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     )
     assert metric["oracle"] == "signal_sanity"
     assert metric["verdict"] == "PASS"
+    generation_output = json.loads(
+        (run_dir / "generation" / "outputs.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    enhanced_path = Path(generation_output["enhanced_wav_path"])
+    assert enhanced_path.is_file()
+    assert enhanced_path.parent == run_dir / "media" / "enhanced"
+    with wave.open(str(enhanced_path), "rb") as enhanced:
+        assert enhanced.getframerate() == 48_000
+        assert enhanced.getnchannels() == 2
 
 
 def test_audio_evaluation_cli_executes_from_materialized_case_run(

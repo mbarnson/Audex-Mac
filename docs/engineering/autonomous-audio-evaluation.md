@@ -431,11 +431,18 @@ Current implementation status:
   selected audio assets into local 16 kHz WAV cache files.
 - `audex_mac/audio_evaluation_suite.py` defines the pinned smoke-suite
   constants, Standard-tier local regression manifest, Full-tier paper-style
-  manifest, local structured control prompts, and deterministic pre-download
+  manifest, the metadata-only AudioCaps audio mirror pin for future reference
+  metrics, local structured control prompts, and deterministic pre-download
   selection. The current ESC-50 foil map is valid and deterministic, but still
   needs semantic hard-negative refinement before standard/full claims.
 - `audex_mac/audio_evaluation_adapters.py` contains the Audex vLLM
-  understanding adapter and a TTA adapter that builds CFG3 XCodec token streams.
+  understanding adapter and a TTA adapter that builds CFG3 XCodec token streams,
+  writes raw 16 kHz mono WAVs, and creates deterministic 48 kHz stereo
+  comparison WAVs under `media/enhanced/`.
+  Valid generation outputs retain the raw 16 kHz mono WAV and also write a
+  deterministic 48 kHz stereo metric-view WAV under `media/enhanced/`. This is
+  not neural enhancement; it is a recorded channel/rate transform for metric
+  consumers until the optional enhancement VAE path exists.
 - `audex_mac/audio_evaluation_xcodec.py` resolves the external XCodec1 model
   path with fail-loud `XCODEC1_PATH` handling, loads the Hugging Face codec only
   when evaluation decoding is requested, converts Audex's interleaved

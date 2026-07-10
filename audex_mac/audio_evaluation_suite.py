@@ -40,6 +40,14 @@ AUDIOCAPS_CAPTION_PIN = DatasetPin(
     license="MIT",
     expected_rows=4875,
 )
+AUDIOCAPS_AUDIO_PIN = DatasetPin(
+    repo_id="OpenSound/AudioCaps",
+    revision="b29b3243d6ce49c2cd0d48d4b5f0701ae7969ded",
+    config="default",
+    split="test",
+    license="CC-BY-NC-4.0",
+    expected_rows=4411,
+)
 SONG_DESCRIBER_PIN = DatasetPin(
     repo_id="renumics/song-describer-dataset",
     revision="dc39062efec7515add304b98a54da2948709a808",

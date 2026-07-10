@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -184,7 +185,8 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
 
     attempt = AudexVllmTtaGenerationAdapter(
         runtime=runtime,
-        raw_dir=tmp_path,
+        raw_dir=tmp_path / "raw",
+        enhanced_dir=tmp_path / "enhanced",
         decode_to_wav=decoder,
     ).generate(_generation_case(), seed=456)
 
@@ -194,6 +196,12 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert runtime.requests[1].sampling.extra_args["cfg_role"] == "uncond"
     assert decoded[0].valid is True
     assert attempt.raw_wav_path.is_file()
+    assert attempt.enhanced_wav_path == tmp_path / "enhanced" / "audiocaps-1.wav"
+    assert attempt.enhanced_wav_path.is_file()
+    with wave.open(str(attempt.enhanced_wav_path), "rb") as enhanced:
+        assert enhanced.getframerate() == 48_000
+        assert enhanced.getnchannels() == 2
+        assert enhanced.getnframes() == 4800
     assert attempt.signal_metrics["nonempty"] is True
     assert attempt.signal_metrics["rms"] > 0.0
     assert abs(attempt.signal_metrics["dc_offset"]) < 0.01

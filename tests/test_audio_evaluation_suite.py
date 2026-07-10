@@ -7,6 +7,7 @@ import pytest
 from audex_mac.audio_evaluation import EvaluationTrack
 from audex_mac.audio_evaluation_datasets import MaterializedAudio
 from audex_mac.audio_evaluation_suite import (
+    AUDIOCAPS_AUDIO_PIN,
     AUDIOCAPS_CAPTION_PIN,
     MMAU_PIN,
     SONG_DESCRIBER_PIN,
@@ -56,6 +57,13 @@ def _song_row(row_id: int, caption: str) -> dict[str, Any]:
         "track_id": row_id + 1000,
         "caption": caption,
     }
+
+
+@pytest.mark.fast
+def test_suite_records_audiocaps_audio_mirror_pin_for_reference_metrics() -> None:
+    assert AUDIOCAPS_AUDIO_PIN.repo_id == "OpenSound/AudioCaps"
+    assert AUDIOCAPS_AUDIO_PIN.expected_rows == 4411
+    assert AUDIOCAPS_AUDIO_PIN.license == "CC-BY-NC-4.0"
 
 
 @pytest.mark.fast
