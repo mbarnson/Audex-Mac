@@ -303,6 +303,10 @@ Full FD_OpenL3 parameters:
 - Pinned precomputed reference-statistics NPZ for the matching dataset and
   exact metric parameters, including the expected SHA-256 of each statistics
   file.
+  - AudioCaps:
+    `3c420a01dd417cfb494202a3e280ebd38fe467a9eebe71a562db7ccba4d93707`
+  - SongDescriber:
+    `94fde8992200ce1c4d5ede5b98573e800a1da8a6aa967eba13b43b2c2b5be5e6`
 - Metric input: ten-second generated clips, peak normalized to -1 dB, resampled
   and channel-handled by the pinned metric implementation.
 - AudioCaps file naming: generated files named by `audiocap_id`; the full test

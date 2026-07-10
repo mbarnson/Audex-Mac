@@ -158,7 +158,7 @@ def main(
         default=None,
         help=(
             "directory containing pinned full-tier stable-audio-metrics OpenL3 "
-            "reference .npz files; when set for standard/full materialization, "
+            "reference .npz files; when set for full materialization, "
             "writes generation/openl3-request.json"
         ),
     )
@@ -524,7 +524,7 @@ def _write_openl3_worker_request_if_configured(
     tier: str,
     reference_stats_root: Path | None,
 ) -> None:
-    if tier not in {"standard", "full"} or reference_stats_root is None:
+    if tier != "full" or reference_stats_root is None:
         return
     write_openl3_worker_request(
         run.run_dir / "generation" / "openl3-request.json",
