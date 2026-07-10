@@ -514,6 +514,29 @@ default. When validating the rest of the pipeline during source outages, use
 `--skip-esc50` and/or `--skip-song-describer`; the manifest records every
 omitted dataset. With both flags, smoke case count drops from 32 to 20.
 
+For repeat execution, first materialize cases, then execute from the prepared
+case run to avoid refetching Hugging Face rows and audio assets:
+
+```sh
+audex-mac eval-audio-capabilities --tier smoke --materialize-only \
+  --skip-esc50 --skip-song-describer --run-id smoke-materialized
+
+audex-mac eval-audio-capabilities --tier smoke \
+  --cases-from-run .audex/runs/audio-capabilities/smoke-materialized \
+  --model 30b --profile nvfp4 \
+  --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
+```
+
+Local evidence on 2026-07-10:
+
+- `smoke-materialize-minimal-20260710`: materialized 20 cases with explicit
+  `--skip-esc50 --skip-song-describer`.
+- `smoke-exec-pass-startsh-20260710`: executed from those materialized cases
+  through `./start.sh` against cached NVFP4 30B and XCodec1.
+- Result: `CHARACTERIZED`, 20/20 complete, no protocol failures, 16
+  understanding cases with 13 correct and 1 invalid response, and 4/4
+  AudioCaps generation cases structurally valid with signal-sanity pass.
+
 Likely future commands, after semantic oracle qualification exists:
 
 ```sh

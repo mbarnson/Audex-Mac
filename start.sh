@@ -11,6 +11,7 @@ VLLM_METAL_DEPS_STAMP="${STATE_DIR}/vllm-metal-deps.stamp"
 PYTHON_BIN="${PYTHON_BIN:-}"
 REFRESH_DEPS=0
 VLLM_METAL_INSTALL_REQUIRED=0
+NEEDS_AUDIO_EVAL_DEPS=0
 ARGS=()
 ARGS_COUNT=0
 export AUDEX_VLLM_TTS_CFG="${AUDEX_VLLM_TTS_CFG:-0}"
@@ -139,14 +140,20 @@ ensure_vllm_metal_runtime() {
 
 ensure_vllm_metal_audex_deps() {
   local python_bin="${VLLM_METAL_VENV_DIR}/bin/python"
+  local deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, sounddevice"
+  local install_target="${ROOT_DIR}"
   local deps_ready=0
+  if [[ "${NEEDS_AUDIO_EVAL_DEPS}" == "1" ]]; then
+    deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, scipy, sounddevice, soundfile, torch, transformers"
+    install_target="${ROOT_DIR}[audio-eval]"
+  fi
   mkdir -p "${STATE_DIR}"
-  if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${python_bin}" -c "import audex_mac, huggingface_hub, prompt_toolkit, sounddevice" >/dev/null 2>&1; then
+  if PYTHONPATH="${VLLM_METAL_PYTHONPATH}" "${python_bin}" -c "${deps_imports}" >/dev/null 2>&1; then
     deps_ready=1
   fi
   if [[ "${VLLM_METAL_INSTALL_REQUIRED}" == "1" || "${deps_ready}" != "1" || ! -f "${VLLM_METAL_DEPS_STAMP}" || "${ROOT_DIR}/pyproject.toml" -nt "${VLLM_METAL_DEPS_STAMP}" ]]; then
     echo "Installing Audex-Mac dependencies into pinned vLLM Metal runtime"
-    "${python_bin}" -m pip install -e "${ROOT_DIR}" >/dev/null
+    "${python_bin}" -m pip install -e "${install_target}" >/dev/null
     touch "${VLLM_METAL_DEPS_STAMP}"
   fi
 }
@@ -213,6 +220,11 @@ for arg in "$@"; do
   case "${arg}" in
     --refresh-deps)
       REFRESH_DEPS=1
+      ;;
+    eval-audio-capabilities)
+      NEEDS_AUDIO_EVAL_DEPS=1
+      ARGS+=("${arg}")
+      ARGS_COUNT=$((ARGS_COUNT + 1))
       ;;
     *)
       ARGS+=("${arg}")

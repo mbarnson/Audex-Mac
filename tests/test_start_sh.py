@@ -67,9 +67,13 @@ def test_start_sh_installs_audex_deps_into_vllm_metal_runtime() -> None:
     script = Path("start.sh").read_text(encoding="utf-8")
 
     assert 'VLLM_METAL_DEPS_STAMP="${STATE_DIR}/vllm-metal-deps.stamp"' in script
+    assert "NEEDS_AUDIO_EVAL_DEPS=0" in script
     assert "ensure_vllm_metal_audex_deps()" in script
     assert "import audex_mac, huggingface_hub, prompt_toolkit, sounddevice" in script
-    assert '"${python_bin}" -m pip install -e "${ROOT_DIR}"' in script
+    assert "soundfile, torch, transformers" in script
+    assert 'install_target="${ROOT_DIR}[audio-eval]"' in script
+    assert 'install_target="${ROOT_DIR}"' in script
+    assert '"${python_bin}" -m pip install -e "${install_target}"' in script
     assert "ensure_vllm_metal_audex_deps" in script
 
 
@@ -115,6 +119,55 @@ ensure_vllm_metal_audex_deps
     assert result.returncode == 0
     invocation = python_log.read_text(encoding="utf-8")
     assert f"-m pip install -e {root!s}" in invocation
+
+
+def test_start_sh_installs_audio_eval_extra_for_eval_command(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    root = tmp_path / "project"
+    state = tmp_path / "state"
+    python_log = tmp_path / "python.log"
+    (runtime / "bin").mkdir(parents=True)
+    root.mkdir()
+    state.mkdir()
+    (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    stamp = state / "vllm-metal-deps.stamp"
+    runtime_python = runtime / "bin" / "python"
+    runtime_python.write_text(
+        "#!/bin/sh\n"
+        'printf \'%s\\n\' "$*" >> "$FAKE_PYTHON_LOG"\n'
+        'case "$*" in\n'
+        "  *'scipy, sounddevice, soundfile, torch, transformers'*) exit 1 ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+
+    start_sh = Path("start.sh").resolve()
+    command = f"""
+source {start_sh!s}
+VLLM_METAL_VENV_DIR={runtime!s}
+VLLM_METAL_DEPS_STAMP={stamp!s}
+STATE_DIR={state!s}
+ROOT_DIR={root!s}
+VLLM_METAL_PYTHONPATH={tmp_path!s}
+VLLM_METAL_INSTALL_REQUIRED=0
+NEEDS_AUDIO_EVAL_DEPS=1
+ensure_vllm_metal_audex_deps
+"""
+    env = os.environ | {"FAKE_PYTHON_LOG": str(python_log)}
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    invocation = python_log.read_text(encoding="utf-8")
+    assert f"-m pip install -e {root!s}[audio-eval]" in invocation
 
 
 def test_start_sh_ensures_managed_checkout_before_reusing_runtime() -> None:

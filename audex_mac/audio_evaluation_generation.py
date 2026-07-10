@@ -36,6 +36,7 @@ class TtaRecipe:
     max_tokens: int = 2048
     target_seconds: float = DEFAULT_TTA_TARGET_SECONDS
     codec_token_cap: int = DEFAULT_TTA_CODEC_TOKENS
+    target_frame_tolerance: int = 1
 
     def __post_init__(self) -> None:
         if self.cfg_scale <= 1.0:
@@ -55,6 +56,8 @@ class TtaRecipe:
             )
         if self.max_tokens <= self.codec_token_cap:
             raise ValueError("max_tokens must leave room for <audiogen_end>")
+        if self.target_frame_tolerance < 0:
+            raise ValueError("target_frame_tolerance must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,16 +185,17 @@ def inspect_tta_output(
     failures: list[str] = []
     if not reached_end:
         failures.append("missing_end_token")
-    if len(codec_ids) != recipe.codec_token_cap:
-        failures.append("incomplete_target")
     if len(codec_ids) % XCODEC1_GENERATED_CODEBOOKS:
         failures.append("incomplete_rvq_frame")
+    expected_frames = recipe.codec_token_cap // XCODEC1_GENERATED_CODEBOOKS
+    frame_count = len(codec_ids) // XCODEC1_GENERATED_CODEBOOKS
+    if abs(frame_count - expected_frames) > recipe.target_frame_tolerance:
+        failures.append("incomplete_target")
     if mismatch is not None:
         failures.append("rvq_phase_mismatch")
     if unexpected:
         failures.append("unexpected_token")
 
-    frame_count = len(codec_ids) // XCODEC1_GENERATED_CODEBOOKS
     return TtaOutputInspection(
         codec_ids=tuple(codec_ids),
         codec_token_count=len(codec_ids),

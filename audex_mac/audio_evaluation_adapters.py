@@ -26,6 +26,7 @@ UNDERSTANDING_PROMPT_TEXT = (
     "Listen to the attached non-speech audio and answer the previous question. "
     "Return only the requested constrained answer."
 )
+_EVAL_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 class AudexVllmUnderstandingAdapter:
@@ -162,7 +163,10 @@ def _run_async(awaitable: Any) -> Any:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(awaitable)
+        global _EVAL_ASYNC_LOOP
+        if _EVAL_ASYNC_LOOP is None or _EVAL_ASYNC_LOOP.is_closed():
+            _EVAL_ASYNC_LOOP = asyncio.new_event_loop()
+        return _EVAL_ASYNC_LOOP.run_until_complete(awaitable)
     raise RuntimeError(
         "audio evaluation adapters are synchronous; call them outside an active "
         f"event loop {loop!r}"

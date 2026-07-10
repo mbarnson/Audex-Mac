@@ -198,5 +198,9 @@ def _write_pcm16_wav(
         raise RuntimeError(
             "XCodec1 WAV output requires the audio-eval dependency soundfile"
         ) from exc
+    peak = max(abs(sample) for sample in waveform)
+    output = (
+        [sample / peak * 0.99 for sample in waveform] if peak > 0.99 else list(waveform)
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(destination, list(waveform), sample_rate, subtype="PCM_16")
+    sf.write(destination, output, sample_rate, subtype="PCM_16")

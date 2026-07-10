@@ -19,8 +19,12 @@ class FakeAsyncRuntime:
     def __init__(self) -> None:
         self.tokenizer = FakeTtaTokenizer()
         self.requests: list[Any] = []
+        self.loop_ids: list[int] = []
 
     async def generate_one_final(self, request: Any) -> VllmRequestResult:
+        import asyncio
+
+        self.loop_ids.append(id(asyncio.get_running_loop()))
         self.requests.append(request)
         return VllmRequestResult(
             text="Answer: B",
@@ -33,6 +37,9 @@ class FakeAsyncRuntime:
     async def generate_many_final(
         self, requests: tuple[Any, ...]
     ) -> tuple[VllmRequestResult, ...]:
+        import asyncio
+
+        self.loop_ids.append(id(asyncio.get_running_loop()))
         self.requests.extend(requests)
         end = self.tokenizer.get_vocab()["<audiogen_end>"]
         return (
@@ -189,6 +196,22 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert attempt.raw_wav_path.read_bytes() == b"RIFF generated"
     assert attempt.signal_metrics["nonempty"] is True
     assert attempt.finish_reason == "stop"
+
+
+@pytest.mark.fast
+def test_evaluation_adapters_reuse_one_event_loop_for_persistent_vllm_runtime(
+    tmp_path: Path,
+) -> None:
+    audio_path = tmp_path / "clip.wav"
+    _write_silent_wav(audio_path)
+    runtime = FakeAsyncRuntime()
+    adapter = AudexVllmUnderstandingAdapter(runtime=runtime)
+
+    adapter.answer(_understanding_case(audio_path), seed=1)
+    adapter.answer(_understanding_case(audio_path), seed=2)
+
+    assert len(runtime.loop_ids) == 2
+    assert len(set(runtime.loop_ids)) == 1
 
 
 def _write_silent_wav(path: Path) -> None:

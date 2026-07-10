@@ -130,6 +130,34 @@ def test_xcodec1_wav_decoder_writes_pcm16_wav(tmp_path: Path) -> None:
     assert info.channels == 1
 
 
+def test_xcodec1_wav_decoder_peak_normalizes_before_pcm16_write(tmp_path: Path) -> None:
+    config = XCodec1Config(path=tmp_path, device="mps")
+    inspection = TtaOutputInspection(
+        codec_ids=(0, 1025, 2050, 3075),
+        codec_token_count=4,
+        frame_count=1,
+        duration_seconds=0.02,
+        reached_end_token=True,
+        first_phase_mismatch=None,
+        unexpected_token_ids=(),
+        failures=(),
+    )
+    destination = tmp_path / "generated.wav"
+
+    decoder = XCodec1WavDecoder(
+        config,
+        codec_loader=lambda _config: FakeCodec(waveform=[2.0, -2.0]),
+        torch_module=FakeTorch(),
+    )
+
+    decoder(inspection, destination, case=None)
+
+    import soundfile as sf
+
+    samples, _sample_rate = sf.read(destination, dtype="float32")
+    assert max(abs(float(sample)) for sample in samples) < 1.0
+
+
 def _torch(*, cuda: bool, mps: bool) -> SimpleNamespace:
     return SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: cuda),
@@ -210,15 +238,19 @@ class FakeTensor:
 
 
 class FakeCodec:
-    def __init__(self) -> None:
+    def __init__(self, waveform: list[float] | None = None) -> None:
         self.seen_codes: FakeTensor | None = None
+        self.waveform = waveform or [0.25, -0.25]
 
     def decode(self, codes: FakeTensor) -> Any:
         self.seen_codes = codes
-        return SimpleNamespace(audio_values=FakeAudioValues())
+        return SimpleNamespace(audio_values=FakeAudioValues(self.waveform))
 
 
 class FakeAudioValues:
+    def __init__(self, waveform: list[float]) -> None:
+        self.waveform = waveform
+
     def __getitem__(self, key: object) -> FakeAudioValues:
         del key
         return self
@@ -230,4 +262,4 @@ class FakeAudioValues:
         return self
 
     def numpy(self) -> list[float]:
-        return [0.25, -0.25]
+        return self.waveform

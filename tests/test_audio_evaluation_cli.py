@@ -128,6 +128,62 @@ def test_audio_evaluation_cli_materializes_smoke_manifest_without_credentials(
     assert "hf_should_not_be_recorded" not in json.dumps(environment)
 
 
+def test_audio_evaluation_cli_reads_hf_token_from_dotenv_without_recording_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows_by_repo = _smoke_rows()
+    seen_client_headers: list[bool] = []
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        seen_client_headers.append(
+            getattr(client, "_headers", {}).get("Authorization")
+            == "Bearer hf_dotenv_secret"
+        )
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF fixture")
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=5.0,
+        )
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("HF_TOKEN=hf_dotenv_secret\n", encoding="utf-8")
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--materialize-only",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "dotenv-token",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert exit_code == 0
+    assert all(seen_client_headers)
+    run_dir = tmp_path / "runs" / "dotenv-token"
+    manifest_text = (run_dir / "manifest.json").read_text(encoding="utf-8")
+    environment_text = (run_dir / "environment.json").read_text(encoding="utf-8")
+    assert "hf_dotenv_secret" not in manifest_text
+    assert "hf_dotenv_secret" not in environment_text
+    assert json.loads(environment_text)["hf_token_present"] is True
+
+
 def test_audio_evaluation_cli_can_explicitly_skip_esc50(
     tmp_path: Path,
 ) -> None:
@@ -342,6 +398,77 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     )
     assert metric["oracle"] == "signal_sanity"
     assert metric["verdict"] == "PASS"
+
+
+def test_audio_evaluation_cli_executes_from_materialized_case_run(
+    tmp_path: Path,
+) -> None:
+    rows_by_repo = _smoke_rows()
+    fetch_count = 0
+
+    def fake_fetch(pin: DatasetPin, *, client: object) -> tuple[Mapping[str, Any], ...]:
+        nonlocal fetch_count
+        del client
+        fetch_count += 1
+        return rows_by_repo[pin.repo_id]
+
+    def fake_materialize(row: Mapping[str, Any]) -> MaterializedAudio:
+        row_id = str(row.get("id") or row.get("filename"))
+        path = tmp_path / "cache" / f"{row_id}.wav"
+        _write_silent_wav(path)
+        return MaterializedAudio(
+            path=str(path),
+            sha256=f"sha-{row_id}",
+            sample_rate=16_000,
+            duration_seconds=0.1,
+        )
+
+    materialize_exit = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--materialize-only",
+            "--skip-esc50",
+            "--skip-song-describer",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--run-id",
+            "prepared",
+        ],
+        fetch_rows=fake_fetch,
+        materialize_audio=fake_materialize,
+    )
+
+    assert materialize_exit == 0
+    assert fetch_count == 2
+
+    execute_exit = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "smoke",
+            "--cases-from-run",
+            str(tmp_path / "runs" / "prepared"),
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "from-prepared",
+        ],
+        fetch_rows=fake_fetch,
+        runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+    )
+
+    assert execute_exit == 0
+    assert fetch_count == 2
+    manifest = json.loads(
+        (tmp_path / "runs" / "from-prepared" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["case_count"] == 20
+    assert manifest["source_cases_run"] == str(tmp_path / "runs" / "prepared")
 
 
 def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(

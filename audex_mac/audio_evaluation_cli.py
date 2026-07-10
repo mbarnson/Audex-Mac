@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .audio_evaluation import AudioEvaluationRun, RunVerdict
+from .audio_evaluation import (
+    AudioEvaluationCase,
+    AudioEvaluationRun,
+    EvaluationTrack,
+    RunVerdict,
+)
 from .audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
@@ -82,6 +88,12 @@ def main(
     parser.add_argument("--run-root", type=Path, default=DEFAULT_AUDIO_EVAL_ROOT)
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_AUDIO_EVAL_CACHE)
     parser.add_argument("--run-id", default=None)
+    parser.add_argument(
+        "--cases-from-run",
+        type=Path,
+        default=None,
+        help="reuse cases from a previous materialized audio-evaluation run",
+    )
     parser.add_argument("--master-seed", type=int, default=DEFAULT_AUDIO_EVAL_SEED)
     parser.add_argument("--model", choices=("30b", "2b"), default="30b")
     parser.add_argument("--profile", choices=("bf16", "nvfp4"), default="bf16")
@@ -129,6 +141,8 @@ def main(
         ),
     )
     args = parser.parse_args(argv)
+    if args.materialize_only and args.cases_from_run is not None:
+        parser.error("--cases-from-run is only valid for execution runs")
 
     if args.model == "2b" and args.profile == "nvfp4":
         parser.error("--profile nvfp4 is only defined for --model 30b")
@@ -150,7 +164,7 @@ def main(
             device=args.xcodec_device,
         )
 
-    hf_token = os.environ.get("HF_TOKEN")
+    hf_token = os.environ.get("HF_TOKEN") or _dotenv_value("HF_TOKEN")
     client = HfDatasetClient(token=hf_token)
 
     def default_fetch(pin: DatasetPin) -> tuple[Mapping[str, Any], ...]:
@@ -180,33 +194,36 @@ def main(
         ).materialize
     )
 
-    mmau_rows = active_fetch(MMAU_PIN)
-    esc50_rows: tuple[Mapping[str, Any], ...] = ()
-    if args.skip_esc50:
-        print(
-            "Audio evaluation: skipping ESC-50 by explicit --skip-esc50.",
-            flush=True,
-        )
+    if args.cases_from_run is not None:
+        cases = _load_cases_from_run(args.cases_from_run)
     else:
-        esc50_rows = active_fetch(ESC50_PIN)
-    audiocaps_rows = active_fetch(AUDIOCAPS_CAPTION_PIN)
-    song_rows: tuple[Mapping[str, Any], ...] = ()
-    if args.skip_song_describer:
-        print(
-            "Audio evaluation: skipping SongDescriber by explicit "
-            "--skip-song-describer.",
-            flush=True,
+        mmau_rows = active_fetch(MMAU_PIN)
+        esc50_rows: tuple[Mapping[str, Any], ...] = ()
+        if args.skip_esc50:
+            print(
+                "Audio evaluation: skipping ESC-50 by explicit --skip-esc50.",
+                flush=True,
+            )
+        else:
+            esc50_rows = active_fetch(ESC50_PIN)
+        audiocaps_rows = active_fetch(AUDIOCAPS_CAPTION_PIN)
+        song_rows: tuple[Mapping[str, Any], ...] = ()
+        if args.skip_song_describer:
+            print(
+                "Audio evaluation: skipping SongDescriber by explicit "
+                "--skip-song-describer.",
+                flush=True,
+            )
+        else:
+            song_rows = active_fetch(SONG_DESCRIBER_PIN)
+        cases = build_smoke_cases_from_rows(
+            mmau_rows=tuple(mmau_rows),
+            esc50_rows=tuple(esc50_rows),
+            audiocaps_rows=tuple(audiocaps_rows),
+            song_describer_rows=tuple(song_rows),
+            master_seed=args.master_seed,
+            materialize_audio=active_materializer,
         )
-    else:
-        song_rows = active_fetch(SONG_DESCRIBER_PIN)
-    cases = build_smoke_cases_from_rows(
-        mmau_rows=tuple(mmau_rows),
-        esc50_rows=tuple(esc50_rows),
-        audiocaps_rows=tuple(audiocaps_rows),
-        song_describer_rows=tuple(song_rows),
-        master_seed=args.master_seed,
-        materialize_audio=active_materializer,
-    )
     run_id = args.run_id or time.strftime("audio-eval-%Y%m%d-%H%M%S")
     run = AudioEvaluationRun.create(
         root=args.run_root,
@@ -224,6 +241,9 @@ def main(
             },
             "generation_oracles": args.generation_oracles,
             "omitted_datasets": _omitted_datasets(args),
+            "source_cases_run": (
+                str(args.cases_from_run) if args.cases_from_run is not None else None
+            ),
             "datasets": [
                 _pin_payload(pin)
                 for pin in (
@@ -280,6 +300,39 @@ def _pin_payload(pin: DatasetPin) -> dict[str, Any]:
         "license": pin.license,
         "expected_rows": pin.expected_rows,
     }
+
+
+def _load_cases_from_run(run_dir: Path) -> tuple[AudioEvaluationCase, ...]:
+    cases: list[AudioEvaluationCase] = []
+    for track in EvaluationTrack:
+        path = run_dir / track.value / "cases.jsonl"
+        if not path.is_file():
+            raise FileNotFoundError(f"case manifest not found: {path}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            payload["track"] = EvaluationTrack(payload["track"])
+            payload["choices"] = tuple(payload.get("choices", ()))
+            cases.append(AudioEvaluationCase(**payload))
+    if not cases:
+        raise ValueError(f"no cases found in {run_dir}")
+    return tuple(cases)
+
+
+def _dotenv_value(name: str, path: Path = Path(".env")) -> str | None:
+    if not path.is_file():
+        return None
+    prefix = f"{name}="
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or not line.startswith(prefix):
+            continue
+        value = line.split("=", 1)[1].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value or None
+    return None
 
 
 def _omitted_datasets(args: argparse.Namespace) -> list[dict[str, str]]:

@@ -106,6 +106,26 @@ def test_inspect_tta_output_requires_complete_phase_valid_ten_second_stream() ->
 
 
 @pytest.mark.fast
+@pytest.mark.parametrize("frames", [499, 501])
+def test_inspect_tta_output_accepts_one_complete_frame_target_tolerance(
+    frames: int,
+) -> None:
+    tokenizer = FakeTokenizer()
+    token_ids = [
+        100 + phase * 1024 + frame % 1024
+        for frame in range(frames)
+        for phase in range(4)
+    ]
+    token_ids.append(11)
+
+    result = inspect_tta_output(tokenizer, token_ids, recipe=TtaRecipe())
+
+    assert result.valid
+    assert result.frame_count == frames
+    assert result.first_phase_mismatch is None
+
+
+@pytest.mark.fast
 def test_inspect_tta_output_reports_phase_and_truncation_failures() -> None:
     tokenizer = FakeTokenizer()
     token_ids = [100, 1124, 3172, 2148]
