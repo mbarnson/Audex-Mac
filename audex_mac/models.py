@@ -49,8 +49,6 @@ _AUDEX_30B = AudexModel(
         "audex_causal_speech_decoder/config.json",
         "audex_causal_speech_decoder/model.safetensors",
         "audex_causal_speech_decoder/modeling_audex_causal_speech_decoder.py",
-        "inference_scripts_vllm/audioqa_scripts/run_audioqa_vllm.py",
-        "inference_scripts_vllm/unified_s2s_scripts/cascaded_s2s_web_server.py",
     ),
     speech_checkpoint_dirs=("checkpoint_folder_full",),
     text_required_files=(
@@ -103,9 +101,6 @@ SUPPORTED_MODELS: tuple[AudexModel, ...] = (
             "audex_causal_speech_decoder/config.json",
             "audex_causal_speech_decoder/model.safetensors",
             "audex_causal_speech_decoder/modeling_audex_causal_speech_decoder.py",
-            "inference_scripts_vllm/audioqa_scripts/run_audioqa_vllm.py",
-            "inference_scripts_vllm/audioqa_scripts/audex_2b_vllm/processing_audex_vllm.py",
-            "inference_scripts_vllm/unified_s2s_scripts/cascaded_s2s_web_server.py",
         ),
         speech_checkpoint_dirs=("checkpoint_folder_full",),
         text_required_files=(

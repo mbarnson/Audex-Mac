@@ -32,7 +32,7 @@ from audex_mac.audio_contract import (
     tokenize_tts_cfg_pair,
 )
 from audex_mac.audio_runtime import preflight_audio_runtime
-from audex_mac.models import DEFAULT_MODEL
+from audex_mac.models import DEFAULT_MODEL, SUPPORTED_MODELS
 
 pytestmark = pytest.mark.fast
 
@@ -211,6 +211,14 @@ def test_audio_runtime_preflight_checks_speech_snapshot_decoder_and_tokenizer(
     assert result.decoder.ready is True
     assert result.speech_tokenizer is not None
     assert result.speech_tokenizer.codec_token_count == 2
+
+
+def test_speech_runtime_does_not_require_nvidia_demo_scripts() -> None:
+    for model in SUPPORTED_MODELS:
+        assert not any(
+            path.startswith("inference_scripts_vllm/")
+            for path in model.speech_required_files
+        )
 
 
 def write_decoder(path: Path, *, sample_rate: int = 16000) -> None:
