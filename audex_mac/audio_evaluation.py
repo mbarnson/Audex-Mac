@@ -102,6 +102,8 @@ class AudioEvaluationSummary:
     technical_failures: Mapping[str, Any]
     diagnostics: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
+    capability_targets: Mapping[str, float]
+    capability_failures: tuple[str, ...]
 
 
 def derive_case_seed(master_seed: int, case_id: str) -> int:
@@ -311,6 +313,7 @@ class AudioEvaluationRun:
         *,
         required_oracles_qualified: bool,
         protocol_failures: tuple[str, ...] = (),
+        capability_targets: Mapping[str, float] | None = None,
     ) -> AudioEvaluationSummary:
         missing = tuple(
             case.case_id
@@ -339,14 +342,49 @@ class AudioEvaluationRun:
             effective_failures.append("required_oracle_qualification_failed")
         if missing:
             effective_failures.append("incomplete_cases")
-        if effective_failures:
-            verdict = RunVerdict.PROTOCOL_FAIL
-        else:
-            verdict = RunVerdict.CHARACTERIZED
         understanding_by_category = _understanding_by_category(
             self.cases,
             outputs_by_case_id,
         )
+        balanced_accuracy = _balanced_accuracy(understanding_by_category)
+        generation = _generation_summary(self.cases, outputs_by_case_id)
+        technical_failures = _technical_failure_summary(
+            self.cases,
+            outputs_by_case_id,
+        )
+        target_payload = dict(capability_targets or {})
+        capability_failures = (
+            ()
+            if effective_failures
+            else _evaluate_capability_targets(
+                targets=target_payload,
+                metrics={
+                    "accuracy": accuracy,
+                    "balanced_accuracy": balanced_accuracy,
+                    "invalid_response_rate": invalid_rate,
+                    "technical_failure_rate": technical_failures.get(
+                        "technical_failure_rate"
+                    ),
+                    "generation_structural_failure_rate": (
+                        (
+                            int(generation["completed_cases"])
+                            - int(generation["structurally_valid"])
+                        )
+                        / int(generation["completed_cases"])
+                        if int(generation["completed_cases"])
+                        else None
+                    ),
+                },
+            )
+        )
+        if effective_failures:
+            verdict = RunVerdict.PROTOCOL_FAIL
+        elif target_payload and capability_failures:
+            verdict = RunVerdict.CAPABILITY_FAIL
+        elif target_payload:
+            verdict = RunVerdict.PASS
+        else:
+            verdict = RunVerdict.CHARACTERIZED
         summary = AudioEvaluationSummary(
             verdict=verdict,
             total_cases=len(self.cases),
@@ -357,13 +395,10 @@ class AudioEvaluationRun:
             invalid_response_rate=invalid_rate,
             confidence_intervals=_confidence_intervals(scored),
             understanding_by_category=understanding_by_category,
-            balanced_accuracy=_balanced_accuracy(understanding_by_category),
+            balanced_accuracy=balanced_accuracy,
             binary_rates=_binary_rates(self.cases, outputs_by_case_id),
-            generation=_generation_summary(self.cases, outputs_by_case_id),
-            technical_failures=_technical_failure_summary(
-                self.cases,
-                outputs_by_case_id,
-            ),
+            generation=generation,
+            technical_failures=technical_failures,
             diagnostics=_diagnostics_summary(
                 self.cases,
                 outputs_by_case_id,
@@ -371,6 +406,8 @@ class AudioEvaluationRun:
                 wall_clock_seconds=time.monotonic() - self._started_monotonic,
             ),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
+            capability_targets=target_payload,
+            capability_failures=capability_failures,
         )
         self.summary_path.write_text(
             json.dumps(_summary_payload(summary), indent=2, sort_keys=True) + "\n",
@@ -694,6 +731,33 @@ def _diagnostics_summary(
         "wall_clock_seconds": wall_clock_seconds,
         "process_peak_rss": _process_peak_rss(),
     }
+
+
+def _evaluate_capability_targets(
+    *,
+    targets: Mapping[str, float],
+    metrics: Mapping[str, float | None],
+) -> tuple[str, ...]:
+    failures: list[str] = []
+    for target_name, raw_threshold in sorted(targets.items()):
+        threshold = float(raw_threshold)
+        if target_name.endswith("_min"):
+            metric_name = target_name[: -len("_min")]
+            observed = metrics.get(metric_name)
+            if observed is None:
+                failures.append(f"{target_name}:missing_metric")
+            elif float(observed) < threshold:
+                failures.append(f"{target_name}:{observed:.6g}<{threshold:.6g}")
+        elif target_name.endswith("_max"):
+            metric_name = target_name[: -len("_max")]
+            observed = metrics.get(metric_name)
+            if observed is None:
+                failures.append(f"{target_name}:missing_metric")
+            elif float(observed) > threshold:
+                failures.append(f"{target_name}:{observed:.6g}>{threshold:.6g}")
+        else:
+            failures.append(f"{target_name}:unsupported_target_suffix")
+    return tuple(failures)
 
 
 def _utc_now() -> str:

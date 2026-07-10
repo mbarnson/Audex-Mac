@@ -418,6 +418,13 @@ Verdicts:
 
 Require 100 percent case completeness for aggregate verdicts.
 
+Capability verdicts must be opt-in. A run without explicit numeric targets is
+`CHARACTERIZED`, not pass/fail. Supported target names use `_min` or `_max`
+suffixes against metrics the evaluator already computes, such as
+`accuracy_min`, `balanced_accuracy_min`, `invalid_response_rate_max`,
+`technical_failure_rate_max`, and `generation_structural_failure_rate_max`.
+Protocol failures always dominate capability targets.
+
 ## Implementation Notes
 
 Current implementation status:
@@ -426,7 +433,9 @@ Current implementation status:
   constrained-answer scoring, append-only artifacts, summary verdicts, and
   credential rejection. Generation case manifests can carry deterministic
   hard-foil captions for future caption-alignment metrics, and cases can carry
-  stable tags/control families for future ablations. Current summaries report
+  stable tags/control families for future ablations. Summaries can apply
+  explicit numeric capability targets to return `PASS` or `CAPABILITY_FAIL`;
+  without targets they remain `CHARACTERIZED`. Current summaries report
   overall constrained-answer accuracy, invalid response rate,
   per-category understanding accuracy,
   balanced accuracy, YES/NO false-positive and false-negative rates,

@@ -351,6 +351,93 @@ def test_run_summary_reports_category_and_generation_breakdowns(
 
 
 @pytest.mark.fast
+def test_run_summary_applies_explicit_capability_targets(tmp_path: Path) -> None:
+    cases = (_case("sound-1", "sound"), _case("sound-2", "sound"))
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="target-pass",
+        tier="standard",
+        master_seed=17,
+        cases=cases,
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+    for case in cases:
+        run.record_output(
+            case_id=case.case_id,
+            payload={"raw_answer": "B", "valid": True, "correct": True},
+        )
+
+    summary = run.finalize(
+        required_oracles_qualified=True,
+        capability_targets={
+            "accuracy_min": 1.0,
+            "invalid_response_rate_max": 0.0,
+        },
+    )
+
+    assert summary.verdict is RunVerdict.PASS
+    assert summary.capability_failures == ()
+    payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
+    assert payload["capability_targets"] == {
+        "accuracy_min": 1.0,
+        "invalid_response_rate_max": 0.0,
+    }
+
+
+@pytest.mark.fast
+def test_run_summary_reports_capability_failures_against_named_targets(
+    tmp_path: Path,
+) -> None:
+    cases = (_case("sound-1", "sound"), _case("sound-2", "sound"))
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="target-fail",
+        tier="standard",
+        master_seed=17,
+        cases=cases,
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+    run.record_output(
+        case_id="sound-1",
+        payload={"raw_answer": "B", "valid": True, "correct": True},
+    )
+    run.record_output(
+        case_id="sound-2",
+        payload={"raw_answer": "A", "valid": True, "correct": False},
+    )
+
+    summary = run.finalize(
+        required_oracles_qualified=True,
+        capability_targets={"accuracy_min": 0.75},
+    )
+
+    assert summary.verdict is RunVerdict.CAPABILITY_FAIL
+    assert summary.capability_failures == ("accuracy_min:0.5<0.75",)
+
+
+@pytest.mark.fast
+def test_protocol_failures_dominate_capability_targets(tmp_path: Path) -> None:
+    case = _case("sound-1", "sound")
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="target-protocol-fail",
+        tier="standard",
+        master_seed=17,
+        cases=(case,),
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+
+    summary = run.finalize(
+        required_oracles_qualified=True,
+        capability_targets={"accuracy_min": 1.0},
+    )
+
+    assert summary.verdict is RunVerdict.PROTOCOL_FAIL
+    assert summary.protocol_failures == ("incomplete_cases",)
+    assert summary.capability_failures == ()
+
+
+@pytest.mark.fast
 def test_run_artifacts_reject_secrets_and_duplicate_case_outputs(
     tmp_path: Path,
 ) -> None:
