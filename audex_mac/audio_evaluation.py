@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -193,6 +195,8 @@ class AudioEvaluationRun:
         )
         self._case_by_id = {case.case_id: case for case in cases}
         self._completed_case_ids: set[str] = set()
+        self._started_at_utc = _utc_now()
+        self._started_monotonic = time.monotonic()
 
     @classmethod
     def create(
@@ -354,7 +358,12 @@ class AudioEvaluationRun:
                 self.cases,
                 outputs_by_case_id,
             ),
-            diagnostics=_diagnostics_summary(self.cases, outputs_by_case_id),
+            diagnostics=_diagnostics_summary(
+                self.cases,
+                outputs_by_case_id,
+                started_at_utc=self._started_at_utc,
+                wall_clock_seconds=time.monotonic() - self._started_monotonic,
+            ),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
         )
         self.summary_path.write_text(
@@ -622,6 +631,9 @@ def _technical_failure_summary(
 def _diagnostics_summary(
     cases: tuple[AudioEvaluationCase, ...],
     outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+    *,
+    started_at_utc: str,
+    wall_clock_seconds: float,
 ) -> dict[str, Any]:
     by_track: dict[str, Any] = {}
     overall_elapsed = 0.0
@@ -670,7 +682,14 @@ def _diagnostics_summary(
         "cases_per_second": (
             overall_completed / overall_elapsed if overall_elapsed > 0 else None
         ),
+        "started_at_utc": started_at_utc,
+        "finalized_at_utc": _utc_now(),
+        "wall_clock_seconds": wall_clock_seconds,
     }
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _is_number(value: Any) -> bool:

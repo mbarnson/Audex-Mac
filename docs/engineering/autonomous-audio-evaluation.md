@@ -424,7 +424,8 @@ Current implementation status:
   balanced accuracy, YES/NO false-positive and false-negative rates,
   deterministic bootstrap confidence intervals for accuracy, generation
   structural/signal failure counts, technical failure rates, and per-track
-  timing/throughput diagnostics.
+  timing/throughput diagnostics with run start/finalization timestamps and
+  wall-clock seconds.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
