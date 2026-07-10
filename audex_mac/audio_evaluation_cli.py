@@ -26,6 +26,7 @@ from .audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
 )
+from .audio_evaluation_ast import AST_REPO_ID, AST_REVISION
 from .audio_evaluation_clap import CLAP_REPO_ID, CLAP_REVISION
 from .audio_evaluation_datasets import MaterializedAudio
 from .audio_evaluation_generation import TtaRecipe
@@ -369,9 +370,9 @@ def _oracle_registry_payload() -> dict[str, Any]:
             },
         },
         "ast": {
-            "status": "planned",
-            "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
-            "revision": "f826b80d28226b62986cc218e5cec390b1096902",
+            "status": "planned_worker_boundary",
+            "repo_id": AST_REPO_ID,
+            "revision": AST_REVISION,
             "purpose": "audioset_event_sanity_diagnostics",
             "qualification_gate": {
                 "calibration": "known pinned calibration split",

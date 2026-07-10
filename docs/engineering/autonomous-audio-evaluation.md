@@ -473,6 +473,13 @@ Current implementation status:
   requested captions, and distinct deterministic hard-foil captions. The worker
   currently fails loud with `UNSCORED`; pinned CLAP embedding/scoring and
   qualification remain future work.
+- `audex_mac/audio_evaluation_ast.py` and
+  `audex_mac/audio_evaluation_ast_worker.py` define the isolated AST worker
+  request/command/result boundary for AudioSet-style event sanity checks. The
+  request contract requires explicit expected and optional forbidden labels per
+  generated WAV rather than deriving labels from captions implicitly. The worker
+  currently fails loud with `UNSCORED`; pinned label-map handling, calibration,
+  and scoring remain future work.
 - `audex_mac/audio_evaluation_openl3.py` and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
   worker request/command/result boundary and fail loudly outside Python 3.11 or
