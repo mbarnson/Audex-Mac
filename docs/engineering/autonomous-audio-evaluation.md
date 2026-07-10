@@ -420,7 +420,8 @@ Current implementation status:
   constrained-answer scoring, append-only artifacts, summary verdicts, and
   credential rejection. Current summaries report overall constrained-answer
   accuracy, invalid response rate, per-category understanding accuracy,
-  balanced accuracy, and generation structural/signal failure counts.
+  balanced accuracy, generation structural/signal failure counts, and
+  per-track timing/throughput diagnostics.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.

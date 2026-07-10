@@ -89,6 +89,7 @@ class AudioEvaluationSummary:
     understanding_by_category: Mapping[str, Mapping[str, Any]]
     balanced_accuracy: float | None
     generation: Mapping[str, Any]
+    diagnostics: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
 
 
@@ -334,6 +335,7 @@ class AudioEvaluationRun:
             understanding_by_category=understanding_by_category,
             balanced_accuracy=_balanced_accuracy(understanding_by_category),
             generation=_generation_summary(self.cases, outputs_by_case_id),
+            diagnostics=_diagnostics_summary(self.cases, outputs_by_case_id),
             protocol_failures=tuple(dict.fromkeys(effective_failures)),
         )
         self.summary_path.write_text(
@@ -459,6 +461,64 @@ def _generation_summary(
         "structural_failures": dict(sorted(structural_failures.items())),
         "signal_failures": dict(sorted(signal_failures.items())),
     }
+
+
+def _diagnostics_summary(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    by_track: dict[str, Any] = {}
+    overall_elapsed = 0.0
+    overall_completed = 0
+    for track in EvaluationTrack:
+        track_cases = [case for case in cases if case.track is track]
+        outputs = [
+            outputs_by_case_id[case.case_id]
+            for case in track_cases
+            if case.case_id in outputs_by_case_id
+        ]
+        elapsed_values = [
+            float(output["elapsed_seconds"])
+            for output in outputs
+            if _is_number(output.get("elapsed_seconds"))
+        ]
+        elapsed_total = sum(elapsed_values)
+        overall_elapsed += elapsed_total
+        overall_completed += len(outputs)
+        payload: dict[str, Any] = {
+            "total_cases": len(track_cases),
+            "completed_cases": len(outputs),
+            "elapsed_seconds_total": elapsed_total,
+            "elapsed_seconds_mean": (
+                elapsed_total / len(elapsed_values) if elapsed_values else None
+            ),
+            "cases_per_second": (
+                len(elapsed_values) / elapsed_total if elapsed_total > 0 else None
+            ),
+        }
+        if track is EvaluationTrack.GENERATION:
+            generated_audio_seconds = sum(
+                float(output["duration_seconds"])
+                for output in outputs
+                if _is_number(output.get("duration_seconds"))
+            )
+            payload["generated_audio_seconds"] = generated_audio_seconds
+            payload["audio_realtime_ratio"] = (
+                generated_audio_seconds / elapsed_total if elapsed_total > 0 else None
+            )
+        by_track[track.value] = payload
+    return {
+        "by_track": by_track,
+        "completed_cases": overall_completed,
+        "elapsed_seconds_total": overall_elapsed,
+        "cases_per_second": (
+            overall_completed / overall_elapsed if overall_elapsed > 0 else None
+        ),
+    }
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _write_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:

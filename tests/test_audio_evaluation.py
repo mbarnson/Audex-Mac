@@ -163,21 +163,38 @@ def test_run_summary_reports_category_and_generation_breakdowns(
 
     run.record_output(
         case_id="sound-1",
-        payload={"raw_answer": "B", "valid": True, "correct": True},
+        payload={
+            "raw_answer": "B",
+            "valid": True,
+            "correct": True,
+            "elapsed_seconds": 0.5,
+        },
     )
     run.record_output(
         case_id="sound-2",
-        payload={"raw_answer": "A", "valid": True, "correct": False},
+        payload={
+            "raw_answer": "A",
+            "valid": True,
+            "correct": False,
+            "elapsed_seconds": 1.5,
+        },
     )
     run.record_output(
         case_id="music-1",
-        payload={"raw_answer": "dog", "valid": False, "correct": False},
+        payload={
+            "raw_answer": "dog",
+            "valid": False,
+            "correct": False,
+            "elapsed_seconds": 1.0,
+        },
     )
     run.record_output(
         case_id="audiocaps-1",
         payload={
             "structurally_valid": False,
             "structure_failures": ["missing_end_token"],
+            "duration_seconds": 10.0,
+            "elapsed_seconds": 5.0,
             "signal_metrics": {
                 "finite": True,
                 "nonempty": True,
@@ -207,6 +224,15 @@ def test_run_summary_reports_category_and_generation_breakdowns(
         "structurally_valid": 0,
         "total_cases": 1,
     }
+    assert payload["diagnostics"]["elapsed_seconds_total"] == 8.0
+    assert payload["diagnostics"]["cases_per_second"] == 0.5
+    assert (
+        payload["diagnostics"]["by_track"]["understanding"]["elapsed_seconds_mean"]
+        == 1.0
+    )
+    assert (
+        payload["diagnostics"]["by_track"]["generation"]["audio_realtime_ratio"] == 2.0
+    )
 
 
 @pytest.mark.fast
