@@ -16,7 +16,12 @@ from audex_mac.audio_evaluation import (
 )
 
 
-def _case(case_id: str, category: str) -> AudioEvaluationCase:
+def _case(
+    case_id: str,
+    category: str,
+    *,
+    tags: tuple[str, ...] = (),
+) -> AudioEvaluationCase:
     return AudioEvaluationCase(
         case_id=case_id,
         track=EvaluationTrack.UNDERSTANDING,
@@ -32,10 +37,16 @@ def _case(case_id: str, category: str) -> AudioEvaluationCase:
         expected_answer="B",
         audio_path=f"/cache/{case_id}.wav",
         choices=("A", "B"),
+        tags=tags,
     )
 
 
-def _generation_case(case_id: str, category: str = "audiocaps") -> AudioEvaluationCase:
+def _generation_case(
+    case_id: str,
+    category: str = "audiocaps",
+    *,
+    tags: tuple[str, ...] = ("generation:caption",),
+) -> AudioEvaluationCase:
     return AudioEvaluationCase(
         case_id=case_id,
         track=EvaluationTrack.GENERATION,
@@ -49,7 +60,7 @@ def _generation_case(case_id: str, category: str = "audiocaps") -> AudioEvaluati
         category=category,
         prompt="A dog barks twice.",
         caption="A dog barks twice.",
-        tags=("generation:caption",),
+        tags=tags,
     )
 
 
@@ -437,6 +448,80 @@ def test_run_summary_aggregates_canonical_semantic_generation_metrics(
             "scored_cases": 2,
         },
         "openl3": {"fd_openl3_by_dataset": {"audiocaps": 66.9}},
+    }
+
+
+@pytest.mark.fast
+def test_run_summary_reports_control_and_dataset_metrics_by_tag(tmp_path: Path) -> None:
+    understanding = _case(
+        "sound-1",
+        "sound",
+        tags=("dataset:mmau", "control:temporal"),
+    )
+    generation = _generation_case(
+        "control-1",
+        tags=("generation:structured-control", "control:temporal"),
+    )
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="tag-breakdowns",
+        tier="standard",
+        master_seed=17,
+        cases=(understanding, generation),
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+    run.record_output(
+        case_id=understanding.case_id,
+        payload={"valid": True, "correct": True},
+    )
+    run.record_output(
+        case_id=generation.case_id,
+        payload={
+            "structurally_valid": False,
+            "structure_failures": ["missing_end_token"],
+            "signal_metrics": {"finite": True, "nonempty": True},
+        },
+    )
+    run.record_generation_metrics(
+        case_id=generation.case_id,
+        payload={
+            "caption_similarity": 0.8,
+            "hard_foil_margin": 0.2,
+            "hard_foil_win": True,
+            "retrieval_rank": 1,
+        },
+    )
+
+    run.finalize(required_oracles_qualified=True)
+
+    payload = json.loads(run.summary_path.read_text(encoding="utf-8"))
+    assert payload["by_tag"]["control:temporal"] == {
+        "completed_cases": 2,
+        "generation_cases": 1,
+        "generation_structural_failure_rate": 1.0,
+        "invalid_response_rate": 0.0,
+        "semantic_metrics": {
+            "ast": {
+                "expected_label_cases": 0,
+                "expected_label_hit_rate": None,
+                "forbidden_label_cases": 0,
+                "forbidden_label_false_positive_rate": None,
+            },
+            "clap": {
+                "hard_foil_cases": 1,
+                "hard_foil_win_rate": 1.0,
+                "mean_caption_similarity": 0.8,
+                "mean_hard_foil_margin": 0.2,
+                "retrieval_top1_cases": 1,
+                "retrieval_top1_rate": 1.0,
+                "scored_cases": 1,
+            },
+            "openl3": {"fd_openl3_by_dataset": {}},
+        },
+        "technical_failure_rate": 0.0,
+        "total_cases": 2,
+        "understanding_accuracy": 1.0,
+        "understanding_cases": 1,
     }
 
 

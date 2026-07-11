@@ -99,6 +99,7 @@ class AudioEvaluationSummary:
     balanced_accuracy: float | None
     binary_rates: Mapping[str, Any]
     generation: Mapping[str, Any]
+    by_tag: Mapping[str, Mapping[str, Any]]
     technical_failures: Mapping[str, Any]
     diagnostics: Mapping[str, Any]
     protocol_failures: tuple[str, ...]
@@ -357,6 +358,11 @@ class AudioEvaluationRun:
             self.cases,
             outputs_by_case_id,
         )
+        by_tag = _by_tag_summary(
+            self.cases,
+            outputs_by_case_id,
+            generation_metrics,
+        )
         target_payload = dict(capability_targets or {})
         capability_failures = (
             ()
@@ -403,6 +409,7 @@ class AudioEvaluationRun:
             balanced_accuracy=balanced_accuracy,
             binary_rates=_binary_rates(self.cases, outputs_by_case_id),
             generation=generation,
+            by_tag=by_tag,
             technical_failures=technical_failures,
             diagnostics=_diagnostics_summary(
                 self.cases,
@@ -726,6 +733,75 @@ def _fd_openl3_by_dataset(metrics: Iterable[Mapping[str, Any]]) -> dict[str, flo
 
 def _mean(values: tuple[float, ...]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def _by_tag_summary(
+    cases: tuple[AudioEvaluationCase, ...],
+    outputs_by_case_id: Mapping[str, Mapping[str, Any]],
+    metric_outputs: Iterable[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    metrics_by_case_id: dict[str, list[Mapping[str, Any]]] = {}
+    for metric in metric_outputs:
+        case_id = str(metric.get("case_id", "")).strip()
+        if case_id:
+            metrics_by_case_id.setdefault(case_id, []).append(metric)
+
+    summaries: dict[str, dict[str, Any]] = {}
+    for tag in sorted({tag for case in cases for tag in case.tags}):
+        tag_cases = tuple(case for case in cases if tag in case.tags)
+        tag_outputs_by_case_id = {
+            case.case_id: outputs_by_case_id[case.case_id]
+            for case in tag_cases
+            if case.case_id in outputs_by_case_id
+        }
+        tag_metrics: list[Mapping[str, Any]] = []
+        for case in tag_cases:
+            tag_metrics.extend(metrics_by_case_id.get(case.case_id, ()))
+
+        scored_outputs = [
+            output for output in tag_outputs_by_case_id.values() if "correct" in output
+        ]
+        generation_cases = tuple(
+            case for case in tag_cases if case.track is EvaluationTrack.GENERATION
+        )
+        generation_outputs = [
+            tag_outputs_by_case_id[case.case_id]
+            for case in generation_cases
+            if case.case_id in tag_outputs_by_case_id
+        ]
+        technical = _technical_failure_summary(tag_cases, tag_outputs_by_case_id)
+        summaries[tag] = {
+            "total_cases": len(tag_cases),
+            "completed_cases": len(tag_outputs_by_case_id),
+            "understanding_cases": sum(
+                1 for case in tag_cases if case.track is EvaluationTrack.UNDERSTANDING
+            ),
+            "generation_cases": len(generation_cases),
+            "understanding_accuracy": (
+                sum(bool(output["correct"]) for output in scored_outputs)
+                / len(scored_outputs)
+                if scored_outputs
+                else None
+            ),
+            "invalid_response_rate": (
+                sum(not bool(output.get("valid", False)) for output in scored_outputs)
+                / len(scored_outputs)
+                if scored_outputs
+                else None
+            ),
+            "generation_structural_failure_rate": (
+                sum(
+                    not bool(output.get("structurally_valid", False))
+                    for output in generation_outputs
+                )
+                / len(generation_outputs)
+                if generation_outputs
+                else None
+            ),
+            "semantic_metrics": _semantic_generation_metrics(tag_metrics),
+            "technical_failure_rate": technical["technical_failure_rate"],
+        }
+    return summaries
 
 
 def _technical_failure_summary(

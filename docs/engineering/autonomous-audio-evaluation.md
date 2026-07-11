@@ -461,9 +461,10 @@ Current implementation status:
   structural/signal failure counts, recorded generation semantic metrics
   (CLAP caption similarity, hard-foil win rate, CLAP retrieval top-1 rate, AST
   expected-label hit rate, AST forbidden-label false-positive rate, and
-  FD_OpenL3 by dataset when present), technical failure rates, and per-track
-  timing/throughput diagnostics with run start/finalization timestamps,
-  wall-clock seconds, and platform-reported process peak RSS.
+  FD_OpenL3 by dataset when present), the same capability/technical breakdowns
+  by stable case tag, technical failure rates, and per-track timing/throughput
+  diagnostics with run start/finalization timestamps, wall-clock seconds, and
+  platform-reported process peak RSS.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
