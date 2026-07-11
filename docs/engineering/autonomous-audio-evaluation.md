@@ -362,13 +362,15 @@ reference audio to Audex.
 Oracle identity should be blind in judge prompts. The judge should not know
 whether audio came from BF16 Audex, NVFP4 Audex, Kimi, a baseline, or a fixture.
 
-Include ablations:
+Implemented ablations are caption hard foils plus the 24 generation controls
+tagged by quantity, distance, temporal order, recording quality, silence/noise,
+and prompt-injection/no-speech traps. They are reported independently by tag.
 
-- silence input
-- shuffled/wrong-audio input
-- audio prompt-injection samples
-- caption hard foils
-- codec round-trip reference controls
+The following audio-input ablations are reserved extensions, not silently
+claimed by the current gate: shuffled/wrong-audio inputs, spoken-audio prompt
+injection, and codec round-trip reference controls. Each needs a pinned asset
+and an explicit expected-answer/scoring contract before it can enter an
+aggregate verdict.
 
 Audex must not judge its own generated audio for a gate. Self-reflection prompts
 can be report-only probes.
