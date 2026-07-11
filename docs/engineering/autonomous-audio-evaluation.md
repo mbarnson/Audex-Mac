@@ -249,7 +249,9 @@ Gate:
 - technical failure rate reported
 
 Standard needs a named blessed baseline before it can pass or fail regressions.
-Without a baseline, return `CHARACTERIZED`.
+Pass `--baseline-name` with the baseline run's `--baseline-summary`; the
+evaluator hashes and records that summary and derives the policy below. Without
+a baseline or explicit targets, return `CHARACTERIZED`.
 
 Recommended regression policy after a blessed baseline exists:
 
@@ -579,17 +581,22 @@ Current implementation status:
   pins/omissions, CLAP/AST/OpenL3 oracle identities and qualification gates,
   git commit and dirty diff hash, host metadata, and key dependency versions
   without recording credentials. `audex_mac/audio_evaluation_worker_pipeline.py`
-  runs the isolated CLAP/AST workers after generation, requires qualified worker
-  results and exact request/result case coverage before ingesting per-case
-  semantic metrics, records `generation/oracle_qualification.json`, and fails
-  closed without recording partial semantic metrics on mismatch. Use
+  runs the isolated CLAP/AST/OpenL3 workers after generation, requires qualified
+  worker results and exact request/result case or dataset coverage before
+  ingesting metrics, records `generation/oracle_qualification.json`, and fails
+  closed without recording partial semantic metrics on mismatch. Named baseline
+  summaries produce the documented regression targets and are recorded by name,
+  path, and SHA-256. Full BF16 profiles automatically apply the documented
+  paper-reproduction targets; quantized profiles remain `CHARACTERIZED` unless a
+  named baseline or explicit targets are supplied. Use
   `--generation-oracles unqualified` to force the previous fail-closed
   placeholder behavior for the signal oracle path. Materialization alone does
   not write a runnable
-  `generation/openl3-request.json`: the request is valid only after exact
-  dataset-specific WAV corpora and reference-statistics paths exist. Supplying
-  `--openl3-reference-stats-root` during Standard/Full materialization records
-  those pinned reference-statistics paths and writes the request. Completed
+  `generation/openl3-request.json`: a runnable request is written after exact
+  dataset-specific WAV corpora are staged and reference-statistics paths exist.
+  Full materialization may write the planned fixed-size request when
+  `--openl3-reference-stats-root` is supplied; execution overwrites it from the
+  actual staged corpus counts. Completed
   generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
   `generation/ast-request.json` for generated cases with explicit local
@@ -678,7 +685,7 @@ audex-mac eval-audio-capabilities --tier smoke \
   --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
 ```
 
-Standard execution adds the isolated semantic worker environment explicitly:
+Standard execution adds both isolated worker environments explicitly:
 
 ```sh
 audex-mac eval-audio-capabilities --tier standard \
@@ -686,8 +693,16 @@ audex-mac eval-audio-capabilities --tier standard \
   --model 30b --profile nvfp4 \
   --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced \
   --semantic-worker-python /path/to/audio-eval/bin/python \
-  --semantic-worker-device mps
+  --semantic-worker-device mps \
+  --openl3-worker-python /path/to/openl3-worker/bin/python \
+  --openl3-implementation-file /path/to/stable-audio-metrics/src/openl3_fd.py \
+  --openl3-reference-stats-root /path/to/openl3-reference-stats \
+  --baseline-name 30b-bf16-20260710 \
+  --baseline-summary /path/to/blessed-run/summary.json
 ```
+
+Omit the two baseline arguments for the first valid Standard run; it will be
+`CHARACTERIZED` and can be reviewed and blessed for later regressions.
 
 Local evidence on 2026-07-10:
 
@@ -732,6 +747,10 @@ audex-mac eval-audio-capabilities --tier full \
   --openl3-worker-python /path/to/openl3-worker/bin/python \
   --openl3-implementation-file /path/to/stable-audio-metrics/src/openl3_fd.py
 ```
+
+For BF16 profiles this command automatically gates against the model-specific
+published MMAU and FD_OpenL3 tolerances above. Quantized profiles should add a
+named local BF16 baseline instead.
 
 ## Sources
 
