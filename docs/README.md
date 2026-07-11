@@ -34,5 +34,9 @@ engineering and operating material lives here.
   design for conversational sound generation, live audio understanding, blind
   auditioning, and a local capability catalog.
 
-The stable implementation contract remains at [PATCH.md](../PATCH.md), as
-requested by the project owner.
+The stable implementation contract remains at [PATCH.md](../PATCH.md). 
+I try to describe there the kinds of changes required
+to keep this Rube Goldberg machine running.
+You should be able to throw PATCH.md at your favorite model
+(I tried with both Opus 4.8 and GPT5.5 High; they did fine)
+how to reproduce this from the vllm-metal checkpoint.
