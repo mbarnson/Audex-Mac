@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "master_seed": 20260711,
+  "cases": [
+    {
+      "case_id": "older-man-sigh",
+      "caption": "An elderly man sighs deeply, then says, 'I thought the storm would never pass.'"
+    },
+    {
+      "case_id": "young-woman-whisper-hiss",
+      "caption": "A young woman whispers, 'Keep the lantern covered,' then hisses softly for silence."
+    },
+    {
+      "case_id": "raspy-man-growl",
+      "caption": "A low raspy man growls, 'Get away from the door.'"
+    },
+    {
+      "case_id": "frightened-woman-inhale-shout",
+      "caption": "A frightened woman gasps sharply, then shouts, 'Run! The bridge is collapsing!'"
+    },
+    {
+      "case_id": "powerful-man-scream",
+      "caption": "A powerful man screams, 'Somebody help me!' then pants for breath."
+    },
+    {
+      "case_id": "gentle-tenor-sing",
+      "caption": "A gentle tenor sings, 'Morning light is calling me home,' holding the final note."
+    },
+    {
+      "case_id": "tired-woman-moan",
+      "caption": "A tired woman moans softly, then says, 'I cannot take another step.'"
+    },
+    {
+      "case_id": "nervous-man-swallow-click",
+      "caption": "A nervous man swallows audibly, clicks his tongue, and says, 'Well, that was awkward.'"
+    },
+    {
+      "case_id": "tense-woman-teeth-hiss",
+      "caption": "A tense woman hisses through her teeth, then mutters, 'This is going to hurt.'"
+    },
+    {
+      "case_id": "athlete-grunts",
+      "caption": "A breathless athlete grunts three times, then says, 'One more.'"
+    }
+  ]
+}

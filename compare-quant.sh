@@ -3,9 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-CORPUS="${ROOT_DIR}/scripts/tta_quant_quality_corpus.json"
-RUN_ROOT="${ROOT_DIR}/.audex/runs/tta-quant-${STAMP}"
-LISTENING="${ROOT_DIR}/.audex/listening/tta-quant-${STAMP}"
+CORPUS="${1:-${ROOT_DIR}/scripts/tta_quant_quality_corpus.json}"
+RUN_LABEL="${2:-tta-quant}"
+if [[ ! "${RUN_LABEL}" =~ ^[a-z0-9-]+$ ]]; then
+  echo "Run label must contain only lowercase letters, digits, and hyphens" >&2
+  exit 2
+fi
+RUN_ROOT="${ROOT_DIR}/.audex/runs/${RUN_LABEL}-${STAMP}"
+LISTENING="${ROOT_DIR}/.audex/listening/${RUN_LABEL}-${STAMP}"
 KEY="${RUN_ROOT}/private-key.json"
 
 "${ROOT_DIR}/start.sh" tta-quant-quality render \

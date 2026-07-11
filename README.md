@@ -6,43 +6,50 @@
 
 Audex-Mac runs NVIDIA's Nemotron-Labs-Audex speech and sound models locally on
 Apple Silicon. Talk to your Mac, let it talk back, or ask it to manufacture a
-small rack of weird noises. No cloud understudy waits behind the curtain.
+small rack of weird noises.
 
 ## Why does this exist?
 
-The respectable reasons to run AI locally are privacy, repeatable scale,
+The typical reasons to run AI locally are, like, privacy, repeatable scale,
 classifier-free queries, stable model choice, and cost. Once a model is on your
-disk, it is yours. Nobody can replace it with a "safer" beige cardigan overnight.
+disk, it is yours.
 
 Cost, admittedly, is funny. A similarly equipped 128 GB / 4 TB M5 Mac was
-$8,149 from Apple in mid-2026. Got-*damn*. The tokens are free once you exclude
-the machine from the accounting, a technique economists call "wanting a Mac."
+$8,149 from Apple in mid-2026. The tokens are nearly free once you exclude
+the machine from the accounting; I could run my Mac flat-out at a cost of
+$0.50/kWh and 100 watts of power consumption and the cost is $1.20 a day,
+even in California where PG&E's extortionate relationship with the CPUC
+makes power ridiculous. Macs are very power-efficient per token.
 
-None of that is why I built this. I wanted to talk to my Mac and see whether it
-could make cool noises. I write songs; an absurdly over-engineered sampler for
+Me? I just wanted to talk to my Mac and have it make cool noises.
+I've been a songwriter since I was 7 years old (I am Gen-X, that means "long-ass
+time ago to you youngsters"). I love figuring out how stuff works.
+
+Therefore, an absurdly over-engineered sampler for
 Logic Pro or Bitwig sounded more interesting than another obedient chatbot.
 
-Audex is therefore a Rube Goldberg synthesizer with a language model where the
-reasonable design should be. This model is okay, but definitely not "I have
-Mythos at home." More parameters will not fix your prompt. They may heat the room.
+Audex-Mac is a Rube Goldberg synthesizer using a language model. The model is okay,
+but definitely not "I have Mythos at home."
 
-Windows support can wait. My 5800X3D, RTX 4080 with 16 GB VRAM, and 64 GB DDR4
-machine is currently a Baldur's Gate 3 and flight-sim appliance. In AI terms, I
-am apparently GPU-poor. What a stupid timeline.
+PC support is a non-goal. My 5800X3D, RTX 4080 with 16 GB VRAM, and 64 GB DDR4
+machine is currently a Baldur's Gate 3 and flight-sim appliance. In AI terms, my
+PC is "GPU-poor".
 
-Adult activities involving NVIDIA's voice model—including gooning and adjacent
-research protocols—are *not yet tested*. Please do not send a benchmark corpus.
+Gooning, roleplay, and other SillyTavern/Marinara Engine-adjacent "research"" with this model
+*are currently untested*. Please do not file issues for the model being too
+safety-aligned by nVidia. Go Heretic it yourself if you want to un-safetymaxx it.
 
-## Build (you must be this tall to ride)
+## Build
 
-This is for Apple Silicon Macs. You need native arm64 Python 3.12 or 3.13,
-enough disk for the model and runtime, and approximately this much unified RAM:
+This ride has a minimum height limit. It is for Apple Silicon Macs.
+You need native arm64 Python 3.12 or 3.13,
+enough disk for the model and runtime, and sufficient RAM:
 
 - Audex 2B BF16: **24 GB recommended**
 - Audex 30B-A3B NVFP4: **48 GB recommended**
 - Audex 30B-A3B BF16: **96 GB recommended**
 
-Could an eventual NVFP4 2B squeeze into 16 GB? Perhaps. The first analysis says
+Could an eventual NVFP4 2B squeeze into 16 GB? Perhaps. My initial analysis says
 it would be tight, swap-happy, and not worth the quality trade. It should fit
 comfortably at 24 GB, where the existing BF16 model already fits. So: maybe.
 
@@ -68,16 +75,16 @@ At `You:`, type and press Enter. Submit an empty prompt to start recording, then
 press Enter again to stop. Shift+Enter inserts a newline in most sensible
 terminals; Option+Enter is the fallback. Type `q` by itself to quit.
 
-For the experimental sound-making workbench:
+For the currently-experimental, time-sucking, weird sound-making workbench:
 
 ```sh
 ./sound.sh
 ```
 
-![A songwriter requests a sound, Audex splits it into five candidates, and the songwriter auditions them blind](docs/assets/sound-lab-flow.png)
+![Request a sound, Audex-Mac splits it into five candidates, and audition them blind.](docs/assets/sound-lab-flow.png)
 
 Describe a sound. Audex makes five candidates and opens a local blind audition
-board. Pick with your ears before revealing which tiny jar of math made what.
+board. Pick with your ears before revealing what prompt prompted those vectors.
 
 ## Test
 
@@ -92,4 +99,6 @@ scripts/lint.sh
 
 Benchmarks, licenses, constraints, architecture, patch history, quality evidence,
 diagnostics, and the rest of the fiddly bits live in the
-[documentation map](docs/README.md), where they can be fiddled with safely.
+[documentation map](docs/README.md).
+
+GLHF
