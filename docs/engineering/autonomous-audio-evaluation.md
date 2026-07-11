@@ -523,10 +523,12 @@ Current implementation status:
   checkpoint through Transformers, validates requested labels against the
   checkpoint label map, applies sigmoid over raw logits, emits per-case
   expected-label and forbidden-label diagnostics, and records
-  model/preprocess/inference timing. Because AST calibration is not complete,
-  the worker marks these diagnostics `UNSCORED` rather than presenting them as
-  a qualified oracle result. AST oracle qualification and calibrated label
-  thresholds remain future work.
+  model/preprocess/inference timing. It also supports an explicit fixed-audio
+  calibration block with expected and forbidden labels, and returns `PASS` only
+  when calibration clears the documented expected-hit and forbidden-false-
+  positive thresholds. Generation-only AST requests still return `UNSCORED`;
+  selecting and pinning a broader blessed AST calibration corpus remains future
+  work.
 - `audex_mac/audio_evaluation_openl3.py`,
   `audex_mac/audio_evaluation_openl3_backend.py`, and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
@@ -569,9 +571,10 @@ Current implementation status:
   generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
   `generation/ast-request.json` for generated cases with explicit local
-  structured-control AST labels. Broader AST label-map fixtures remain future
-  work so labels are not inferred from arbitrary captions implicitly. Execution
-  runs can opt into pass/fail verdicts with repeatable
+  structured-control AST labels. Broader AST label-map fixtures and a pinned
+  AST calibration corpus remain future work so labels are not inferred from
+  arbitrary captions implicitly. Execution runs can opt into pass/fail verdicts
+  with repeatable
   `--capability-target NAME=VALUE` arguments; without explicit targets,
   successful runs remain `CHARACTERIZED`.
 

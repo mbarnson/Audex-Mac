@@ -14,6 +14,8 @@ from .audio_evaluation_ast import AST_REPO_ID, AST_REVISION
 
 AST_EXPECTED_LABEL_MIN_PROBABILITY = 0.10
 AST_FORBIDDEN_LABEL_MIN_PROBABILITY = 0.10
+AST_MIN_QUALIFICATION_EXPECTED_HIT_RATE = 0.85
+AST_MAX_QUALIFICATION_FORBIDDEN_FALSE_POSITIVE_RATE = 0.15
 AST_TOP_K = 10
 
 
@@ -82,6 +84,7 @@ def run_worker(
             device=device,
         )
         result = _evaluate(payload, backend=backend)
+        qualification = _qualify(payload, backend=backend)
     except Exception as exc:
         _write_result(
             output_path,
@@ -94,12 +97,13 @@ def run_worker(
         output_path,
         {
             "schema_version": 1,
-            "status": "UNSCORED",
-            "reason": "ast_oracle_not_qualified",
-            "qualification": {
-                "qualified": False,
-                "status": "NOT_RUN",
-            },
+            "status": "PASS" if qualification["qualified"] else "UNSCORED",
+            **(
+                {}
+                if qualification["qualified"]
+                else {"reason": "ast_oracle_not_qualified"}
+            ),
+            "qualification": qualification,
             "model": {
                 "repo_id": AST_REPO_ID,
                 "revision": AST_REVISION,
@@ -114,17 +118,29 @@ def run_worker(
             **result,
         },
     )
-    return 2
+    return 0 if qualification["qualified"] else 2
 
 
 def _evaluate(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
-    requests = list(payload["requests"])
-    paths = [Path(str(request["generated_wav_path"])) for request in requests]
+    return _score_label_requests(
+        list(payload["requests"]),
+        path_field="generated_wav_path",
+        missing_path_label="generated WAV paths do not exist",
+        backend=backend,
+    )
+
+
+def _score_label_requests(
+    requests: list[Any],
+    *,
+    path_field: str,
+    missing_path_label: str,
+    backend: Any,
+) -> dict[str, Any]:
+    paths = [Path(str(request[path_field])) for request in requests]
     missing_paths = [str(path) for path in paths if not path.is_file()]
     if missing_paths:
-        raise FileNotFoundError(
-            f"generated WAV paths do not exist: {', '.join(missing_paths)}"
-        )
+        raise FileNotFoundError(f"{missing_path_label}: {', '.join(missing_paths)}")
 
     probabilities, preprocessing_seconds, inference_seconds = backend.classify_audio(
         paths
@@ -191,6 +207,53 @@ def _evaluate(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
             "preprocessing_seconds": round(float(preprocessing_seconds), 9),
             "inference_seconds": round(float(inference_seconds), 9),
         },
+    }
+
+
+def _qualify(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
+    requests = list(payload.get("qualification_requests", ()))
+    if not requests:
+        return {
+            "qualified": False,
+            "status": "NOT_RUN",
+            "thresholds": _qualification_thresholds(),
+        }
+    result = _score_label_requests(
+        requests,
+        path_field="audio_path",
+        missing_path_label="AST qualification audio paths do not exist",
+        backend=backend,
+    )
+    expected_hit_rate = float(result["metrics"]["expected_label_hit_rate"])
+    forbidden_false_positive_rate = float(
+        result["metrics"]["forbidden_label_false_positive_rate"]
+    )
+    qualified = (
+        expected_hit_rate >= AST_MIN_QUALIFICATION_EXPECTED_HIT_RATE
+        and forbidden_false_positive_rate
+        <= AST_MAX_QUALIFICATION_FORBIDDEN_FALSE_POSITIVE_RATE
+    )
+    return {
+        "qualified": qualified,
+        "status": "PASS" if qualified else "FAIL",
+        "case_count": int(result["metrics"]["expected_label_cases"]),
+        "expected_label_hit_rate": expected_hit_rate,
+        "forbidden_label_false_positive_rate": forbidden_false_positive_rate,
+        "thresholds": _qualification_thresholds(),
+        "per_case": result["per_case"],
+        "timings": {
+            "preprocessing_seconds": result["timings"]["preprocessing_seconds"],
+            "inference_seconds": result["timings"]["inference_seconds"],
+        },
+    }
+
+
+def _qualification_thresholds() -> dict[str, float]:
+    return {
+        "min_expected_label_hit_rate": AST_MIN_QUALIFICATION_EXPECTED_HIT_RATE,
+        "max_forbidden_label_false_positive_rate": (
+            AST_MAX_QUALIFICATION_FORBIDDEN_FALSE_POSITIVE_RATE
+        ),
     }
 
 
@@ -281,6 +344,42 @@ def _request_validation_error(path: Path) -> str | None:
             return f"request {index} forbidden_labels must not contain empty labels"
         if set(expected_labels) & set(forbidden_labels):
             return f"request {index} expected/forbidden labels must not overlap"
+    qualification_requests = payload.get("qualification_requests", [])
+    if not isinstance(qualification_requests, list):
+        return "qualification_requests must be a list"
+    for index, request in enumerate(qualification_requests):
+        if not isinstance(request, dict):
+            return f"qualification request {index} must be an object"
+        for field in ("case_id", "audio_path"):
+            if not str(request.get(field, "")).strip():
+                return f"qualification request {index} is missing {field}"
+        expected_labels = request.get("expected_labels")
+        forbidden_labels = request.get("forbidden_labels")
+        if not isinstance(expected_labels, list) or not expected_labels:
+            return (
+                f"qualification request {index} expected_labels "
+                "must be a non-empty list"
+            )
+        if not isinstance(forbidden_labels, list) or not forbidden_labels:
+            return (
+                f"qualification request {index} forbidden_labels "
+                "must be a non-empty list"
+            )
+        if any(not str(label).strip() for label in expected_labels):
+            return (
+                f"qualification request {index} "
+                "expected_labels must not contain empty labels"
+            )
+        if any(not str(label).strip() for label in forbidden_labels):
+            return (
+                f"qualification request {index} "
+                "forbidden_labels must not contain empty labels"
+            )
+        if set(expected_labels) & set(forbidden_labels):
+            return (
+                f"qualification request {index} "
+                "expected/forbidden labels must not overlap"
+            )
     return None
 
 

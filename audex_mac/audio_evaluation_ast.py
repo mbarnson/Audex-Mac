@@ -43,6 +43,36 @@ class AstCaseRequest:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class AstQualificationRequest:
+    case_id: str
+    audio_path: str
+    expected_labels: tuple[str, ...]
+    forbidden_labels: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.case_id.strip():
+            raise ValueError("AST qualification request case_id must not be empty")
+        if not self.audio_path.strip():
+            raise ValueError("AST qualification request audio_path must not be empty")
+        if not self.expected_labels:
+            raise ValueError("AST qualification request requires expected labels")
+        if not self.forbidden_labels:
+            raise ValueError("AST qualification request requires forbidden labels")
+        empty_expected = [label for label in self.expected_labels if not label.strip()]
+        empty_forbidden = [
+            label for label in self.forbidden_labels if not label.strip()
+        ]
+        if empty_expected or empty_forbidden:
+            raise ValueError("AST qualification labels must not be empty")
+        overlap = set(self.expected_labels) & set(self.forbidden_labels)
+        if overlap:
+            raise ValueError(
+                "AST qualification expected/forbidden labels overlap: "
+                f"{sorted(overlap)}"
+            )
+
+
 def build_ast_case_requests(
     cases: Iterable[AudioEvaluationCase],
     *,
@@ -80,6 +110,7 @@ def write_ast_worker_request(
     *,
     run_id: str,
     requests: Iterable[AstCaseRequest],
+    qualification_requests: Iterable[AstQualificationRequest] = (),
     model_repo_id: str = AST_REPO_ID,
     model_revision: str = AST_REVISION,
 ) -> None:
@@ -92,6 +123,9 @@ def write_ast_worker_request(
         },
         "logit_policy": "sigmoid_raw_logits",
         "requests": [asdict(request) for request in requests],
+        "qualification_requests": [
+            asdict(request) for request in qualification_requests
+        ],
         "metrics": {
             "expected_label_hits": True,
             "forbidden_label_false_positives": True,

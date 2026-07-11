@@ -9,6 +9,7 @@ from audex_mac.audio_evaluation import AudioEvaluationCase, EvaluationTrack
 from audex_mac.audio_evaluation_ast import (
     AST_REVISION,
     AstCaseRequest,
+    AstQualificationRequest,
     build_ast_case_requests,
     build_ast_worker_command,
     load_ast_worker_result,
@@ -103,6 +104,7 @@ def test_ast_worker_request_requires_explicit_expected_labels(
             "repo_id": "MIT/ast-finetuned-audioset-10-10-0.4593",
             "revision": AST_REVISION,
         },
+        "qualification_requests": [],
         "requests": [
             {
                 "case_id": "control-quantity-01",
@@ -133,6 +135,13 @@ def test_ast_request_rejects_missing_labels_or_overlapping_labels(
             generated_wav_path=str(tmp_path / "bad.wav"),
             expected_labels=("Dog",),
             forbidden_labels=("Dog",),
+        )
+    with pytest.raises(ValueError, match="forbidden"):
+        AstQualificationRequest(
+            case_id="bad-calibration",
+            audio_path=str(tmp_path / "bad-calibration.wav"),
+            expected_labels=("Dog",),
+            forbidden_labels=(),
         )
 
 
@@ -341,6 +350,10 @@ def test_ast_worker_scores_expected_and_forbidden_event_labels(
     assert payload["qualification"] == {
         "qualified": False,
         "status": "NOT_RUN",
+        "thresholds": {
+            "max_forbidden_label_false_positive_rate": 0.15,
+            "min_expected_label_hit_rate": 0.85,
+        },
     }
     assert payload["model"] == {
         "device": "mps",
@@ -374,6 +387,97 @@ def test_ast_worker_scores_expected_and_forbidden_event_labels(
         "model_load_seconds": 0.25,
         "preprocessing_seconds": 0.3,
     }
+
+
+def test_ast_worker_qualifies_with_fixed_label_calibration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    output_path = tmp_path / "result.json"
+    generated_wav = tmp_path / "generated.wav"
+    dog_wav = tmp_path / "dog.wav"
+    speech_wav = tmp_path / "speech.wav"
+    generated_wav.write_bytes(b"RIFF generated")
+    dog_wav.write_bytes(b"RIFF dog")
+    speech_wav.write_bytes(b"RIFF speech")
+    write_ast_worker_request(
+        request_path,
+        run_id="qualified-run",
+        requests=(
+            AstCaseRequest(
+                case_id="generated",
+                generated_wav_path=str(generated_wav),
+                expected_labels=("Dog", "Bark"),
+                forbidden_labels=("Speech",),
+            ),
+        ),
+        qualification_requests=(
+            AstQualificationRequest(
+                case_id="dog-calibration",
+                audio_path=str(dog_wav),
+                expected_labels=("Dog", "Bark"),
+                forbidden_labels=("Speech",),
+            ),
+            AstQualificationRequest(
+                case_id="speech-calibration",
+                audio_path=str(speech_wav),
+                expected_labels=("Speech",),
+                forbidden_labels=("Dog", "Bark"),
+            ),
+        ),
+    )
+
+    class FakeBackend:
+        labels = frozenset(("Dog", "Bark", "Speech", "Music"))
+        model_load_seconds = 0.25
+
+        def classify_audio(
+            self,
+            paths: list[Path],
+        ) -> tuple[list[dict[str, float]], float, float]:
+            scores = {
+                generated_wav: {
+                    "Dog": 0.91,
+                    "Bark": 0.72,
+                    "Speech": 0.02,
+                    "Music": 0.01,
+                },
+                dog_wav: {
+                    "Dog": 0.93,
+                    "Bark": 0.74,
+                    "Speech": 0.01,
+                    "Music": 0.01,
+                },
+                speech_wav: {
+                    "Dog": 0.01,
+                    "Bark": 0.02,
+                    "Speech": 0.92,
+                    "Music": 0.03,
+                },
+            }
+            return ([scores[path] for path in paths], 0.30, 0.40)
+
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_ast_worker._missing_modules",
+        lambda _names: (),
+    )
+
+    exit_code = run_worker(
+        request_path=request_path,
+        output_path=output_path,
+        device="mps",
+        backend_factory=lambda **_kwargs: FakeBackend(),
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert "reason" not in payload
+    assert payload["qualification"]["qualified"] is True
+    assert payload["qualification"]["expected_label_hit_rate"] == 1.0
+    assert payload["qualification"]["forbidden_label_false_positive_rate"] == 0.0
+    assert payload["metrics"]["expected_label_hit_rate"] == 1.0
 
 
 def test_ast_backend_requires_the_explicit_accelerator() -> None:
