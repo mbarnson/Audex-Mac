@@ -33,6 +33,27 @@ def test_tta_quant_corpus_uses_literal_unique_caption_cases() -> None:
 
 
 @pytest.mark.fast
+def test_tta_voice_corpus_covers_distinct_vocal_behaviors() -> None:
+    corpus = load_tta_quality_corpus(Path("scripts/tta_quant_voice_corpus.json"))
+
+    assert len(corpus.cases) == 10
+    captions = " ".join(case.caption.casefold() for case in corpus.cases)
+    for behavior in (
+        "sighs",
+        "whispers",
+        "growls",
+        "shouts",
+        "screams",
+        "sings",
+        "moans",
+        "swallows",
+        "hisses through her teeth",
+        "grunts",
+    ):
+        assert behavior in captions
+
+
+@pytest.mark.fast
 def test_nvidia_tta_environment_pins_reference_batch_and_context() -> None:
     env: dict[str, str] = {}
 
