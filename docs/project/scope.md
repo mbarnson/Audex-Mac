@@ -1,9 +1,10 @@
 # Audex-Mac Demo Scope
 
-Audex-Mac demonstrates a complete local speech-to-speech conversation with
-NVIDIA Audex on Apple Silicon:
+Audex-Mac demonstrates a complete local multimodal conversation and sound studio
+with NVIDIA Audex on Apple Silicon:
 
 ```sh
+./start.sh web
 ./start.sh
 ```
 
@@ -13,12 +14,17 @@ directly, and Audex speaks its locally generated response.
 
 ## Product Contract
 
-- CLI-only typed or push-to-talk conversation with spoken responses.
+- Browser and CLI typed or push-to-talk conversation with text or spoken responses.
+- Browser audio understanding and text/audio-prompted non-speech generation.
+- Always-visible browser transcripts, persistent Audex-named chat history, and
+  user-editable titles.
 - One persistent vLLM Metal engine on MLX/Metal.
 - Audex audio input, text reasoning, speech-token output, and causal decoder.
 - Non-thinking instruct mode by default; thinking is explicit.
 - Faster no-CFG speech generation by default, with explicit CFG3 quality mode.
 - Persistent readable transcripts and a 262,144-token active-context policy.
+- One conversation/cache identity across freely switched text/speech input and
+  text/speech output modes; switching modes does not reconstruct the engine.
 - No silent history pruning or compaction.
 
 ## Validated Model
@@ -55,6 +61,7 @@ NVIDIA-provided Audex components are allowed.
 ## Acceptance Criteria
 
 - A fresh supported Mac can reach the demo through `./start.sh`.
+- A fresh supported Mac can reach the local browser through `./start.sh web`.
 - The 30B model can carry a multi-turn spoken conversation without dropping
   committed history inside the configured 256K window.
 - Audio input and output remain Audex-native.
@@ -68,6 +75,6 @@ NVIDIA-provided Audex components are allowed.
 - conversation compaction or summarization
 - million-token Mac inference in this release
 - VAD, endpointing, barge-in, or continuous microphone streaming
-- GUI, LiveKit, or server API for the conversational demo
+- remote hosting, account sync, LiveKit, or a network-exposed server API
 - exact token/logit parity with NVIDIA CUDA inference
 - committing model weights, WAVs, or other generated binaries

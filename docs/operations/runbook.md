@@ -19,6 +19,18 @@ The normal path should be quiet and automatic:
 7. Apply vLLM Metal patch guards and monkey patches.
 8. Launch a typed-or-push-to-talk CLI with spoken responses.
 
+The browser product uses the same bootstrap and runtime:
+
+```sh
+./start.sh web
+```
+
+It binds only to loopback, opens `http://127.0.0.1:8765`, and delays loading the
+model until the first submitted turn. Use `--no-open` when launching it from a
+terminal that should not open a browser window. `web` installs the audio-eval
+extra because its sound-generation modes share the XCodec and enhancement path
+used by `sound.sh`.
+
 ## Public Repository Rules
 
 Before pushing publicly:

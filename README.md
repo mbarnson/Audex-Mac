@@ -73,6 +73,33 @@ installs the pinned runtime, finds cached models, and asks before downloading on
 
 ## Run
 
+For the full browser chat, speech, understanding, and sound studio:
+
+```sh
+./start.sh web
+```
+
+The browser opens on `http://127.0.0.1:8765`. It supports text, microphone, and
+audio-file input; written, spoken, and generated-audio output; editable Audex
+conversation titles; persistent history; and visible transcripts for every
+speech turn. Switch between text-to-text, text-to-speech, speech-to-text, and
+speech-to-speech inside one conversation without resetting its model history or
+vLLM cache identity.
+
+The first non-speech generation request lazily loads the XCodec and enhancement
+decoders used by `sound.sh`. Generated variations appear immediately with their
+captions and players; the browser does not use Sound Lab's blind-voting/reveal
+flow. To keep the browser in the background or select a cached model explicitly:
+
+```sh
+./start.sh web --no-open --model 2b
+./start.sh web --no-open --model 30b-nvfp4
+```
+
+Allow microphone access when the browser asks. Audex converts microphone and
+file audio to 16 kHz mono WAV locally before sending it to the localhost server.
+Nothing is uploaded to a cloud service.
+
 For a typed or push-to-talk conversation:
 
 ```sh
