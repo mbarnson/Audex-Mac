@@ -28,6 +28,9 @@ engineering and operating material lives here.
 - [Autonomous audio-capability evaluation](engineering/autonomous-audio-evaluation.md)
   — engineering design and implementation foundation for non-speech audio
   understanding and text-to-audio generation.
+- [Audex Sound Lab](engineering/audex-sound-lab.md) — product and implementation
+  design for conversational sound generation, live audio understanding, blind
+  auditioning, and a local capability catalog.
 
 The stable implementation contract remains at [PATCH.md](../PATCH.md), as
 requested by the project owner.
