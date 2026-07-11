@@ -31,7 +31,7 @@ catalog memory remain Phases 2 through 4 below. `start.sh` behavior remains
 unchanged.
 
 Local validation on 2026-07-10: `scripts/lint.sh` passed and
-`.venv/bin/python -m pytest -m fast` passed 733 tests with 3 intentionally
+`.venv/bin/python -m pytest -m fast` passed 741 tests with 3 intentionally
 deselected. The loopback board integration used a real ephemeral HTTP server.
 This validates the host-side Phase 1 contracts; a model-backed CFG3/XCodec
 audition remains an owner-run Apple Silicon acceptance test.
@@ -301,6 +301,17 @@ tool call; this tool is for deliberate investigation.
 The dispatcher returns errors explicitly. It must not silently translate an
 invalid tool call, invent defaults that change the requested work, or fall back
 to a remote service.
+
+Model-authored sound-design JSON uses a separate bounded normalization policy.
+The harness may extract one unambiguous JSON object from prose or a Markdown
+fence, accept the documented `variants`/`sounds`/`candidates`,
+`caption`/`prompt`/`description`, and
+`difference`/`rationale`/`variation` aliases, ignore unrelated metadata, and
+derive generation seeds deterministically on the host. Semantic invariants
+remain strict: the candidate count must match, captions must be nonempty, and
+conflicting aliases are rejected. If normalization fails, the model gets one
+repair turn. A second failure stops the job. Every literal attempt and whether
+repair was used are persisted on the job for diagnosis.
 
 ## Logical Roles
 

@@ -22,6 +22,29 @@ class VariantBrief:
 
 
 @dataclass(frozen=True, slots=True)
+class VariantDesignResult:
+    variants: tuple[VariantBrief, ...]
+    raw_attempts: tuple[str, ...] = ()
+    repair_used: bool = False
+
+
+class VariantDesignError(ValueError):
+    """A bounded designer attempt and repair both failed validation."""
+
+    def __init__(
+        self,
+        errors: tuple[str, ...],
+        raw_attempts: tuple[str, ...],
+        *,
+        repair_used: bool = True,
+    ) -> None:
+        self.errors = errors
+        self.raw_attempts = raw_attempts
+        self.repair_used = repair_used
+        super().__init__("; ".join(errors))
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedSound:
     wav_path: Path
     duration_seconds: float
@@ -46,7 +69,7 @@ class SoundVariantDesigner(Protocol):
         call: RenderSoundsCall,
         *,
         job_id: str,
-    ) -> tuple[VariantBrief, ...]: ...
+    ) -> VariantDesignResult: ...
 
 
 class SoundGenerator(Protocol):
@@ -102,10 +125,28 @@ class SoundLabSession:
             model_repo=self._model_repo,
         )
         try:
+            design = self._designer.design(planned, job_id=job_id)
+            self._catalog.record_design_attempts(
+                job_id,
+                raw_attempts=design.raw_attempts,
+                repair_used=design.repair_used,
+            )
             variants = self._validate_variants(
-                self._designer.design(planned, job_id=job_id),
+                design.variants,
                 expected_count=planned.count,
             )
+        except VariantDesignError as exc:
+            self._catalog.record_design_attempts(
+                job_id,
+                raw_attempts=exc.raw_attempts,
+                repair_used=exc.repair_used,
+            )
+            self._catalog.finish_job(
+                job_id,
+                failed=True,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
         except Exception as exc:
             self._catalog.finish_job(
                 job_id,

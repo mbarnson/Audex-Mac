@@ -79,6 +79,43 @@ class SoundLabCatalog:
                 (_now(), job_id),
             )
 
+    def record_design_attempts(
+        self,
+        job_id: str,
+        *,
+        raw_attempts: tuple[str, ...],
+        repair_used: bool,
+    ) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs
+                SET designer_attempts_json = ?, designer_repair_used = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+                """,
+                (json.dumps(raw_attempts), int(repair_used), _now(), job_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown Sound Lab job: {job_id}")
+
+    def job_diagnostics(self, job_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT designer_attempts_json, designer_repair_used, failure
+                FROM jobs WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown Sound Lab job: {job_id}")
+        return {
+            "designer_raw_attempts": json.loads(str(row[0])),
+            "designer_repair_used": bool(row[1]),
+            "failure": row[2],
+        }
+
     def mark_candidate_ready(
         self,
         asset_id: str,
@@ -283,6 +320,8 @@ class SoundLabCatalog:
                     model_repo TEXT NOT NULL,
                     state TEXT NOT NULL,
                     failure TEXT,
+                    designer_attempts_json TEXT NOT NULL DEFAULT '[]',
+                    designer_repair_used INTEGER NOT NULL DEFAULT 0,
                     revealed INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -314,6 +353,18 @@ class SoundLabCatalog:
                     created_at TEXT NOT NULL
                 );
                 """)
+            _ensure_column(
+                connection,
+                "jobs",
+                "designer_attempts_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            _ensure_column(
+                connection,
+                "jobs",
+                "designer_repair_used",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
 
     def _set_candidate_state(
         self,
@@ -341,3 +392,16 @@ class SoundLabCatalog:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    existing = {
+        str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+    }
+    if column not in existing:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")

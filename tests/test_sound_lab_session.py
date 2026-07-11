@@ -10,6 +10,8 @@ from audex_mac.sound_lab.session import (
     GeneratedSound,
     SoundLabSession,
     VariantBrief,
+    VariantDesignError,
+    VariantDesignResult,
 )
 from audex_mac.sound_lab.tools import RenderSoundsCall
 
@@ -27,14 +29,18 @@ class FakePlanner:
 
 
 class FakeDesigner:
-    def design(
-        self, call: RenderSoundsCall, *, job_id: str
-    ) -> tuple[VariantBrief, ...]:
+    def design(self, call: RenderSoundsCall, *, job_id: str) -> VariantDesignResult:
         assert call.count == 2
         assert job_id == "job-fixed"
-        return (
-            VariantBrief("A sharp nearby thunder crack.", "near and dry", 101),
-            VariantBrief("Distant rolling thunder in a valley.", "far and long", 202),
+        return VariantDesignResult(
+            variants=(
+                VariantBrief("A sharp nearby thunder crack.", "near and dry", 101),
+                VariantBrief(
+                    "Distant rolling thunder in a valley.", "far and long", 202
+                ),
+            ),
+            raw_attempts=("designer raw response",),
+            repair_used=True,
         )
 
 
@@ -58,6 +64,15 @@ class FakeGenerator:
             output.setframerate(16_000)
             output.writeframes(b"\0\0" * 160)
         return GeneratedSound(path, duration_seconds=0.01, elapsed_seconds=0.25)
+
+
+class FailingDesigner:
+    def design(self, call: RenderSoundsCall, *, job_id: str) -> VariantDesignResult:
+        del call, job_id
+        raise VariantDesignError(
+            ("first invalid", "repair invalid"),
+            ("raw first", "raw repair"),
+        )
 
 
 @pytest.mark.fast
@@ -95,3 +110,30 @@ def test_session_turn_plans_renders_and_publishes_each_blind_candidate(
     }
     assert all(item["state"] == "ready" for item in snapshot["jobs"][0]["candidates"])
     assert all("caption" not in item for item in snapshot["jobs"][0]["candidates"])
+    assert catalog.job_diagnostics("job-fixed") == {
+        "designer_raw_attempts": ["designer raw response"],
+        "designer_repair_used": True,
+        "failure": None,
+    }
+
+
+@pytest.mark.fast
+def test_session_persists_failed_designer_attempts(tmp_path: Path) -> None:
+    catalog = SoundLabCatalog(tmp_path / "catalog.sqlite3")
+    session = SoundLabSession(
+        catalog=catalog,
+        planner=FakePlanner(),
+        designer=FailingDesigner(),
+        generator=FakeGenerator(),
+        asset_root=tmp_path / "assets",
+        model_repo="audex-fixture",
+        id_factory=lambda _prefix: "job-fixed",
+    )
+
+    with pytest.raises(VariantDesignError):
+        session.handle("Make two very different thunderclaps.")
+
+    diagnostics = catalog.job_diagnostics("job-fixed")
+    assert diagnostics["designer_raw_attempts"] == ["raw first", "raw repair"]
+    assert diagnostics["designer_repair_used"] is True
+    assert "first invalid" in str(diagnostics["failure"])
