@@ -157,8 +157,20 @@ def test_http_application_serves_the_browser_shell_and_assets(tmp_path: Path) ->
     assert b".message-bubble" in styles.body
     assert "javascript" in script.content_type
     assert b"createWavRecorder" in script.body
+    assert b"cancelRecording" in script.body
+    assert b"recordingEpoch" in script.body
+    assert b"recording.cancel()" in script.body
+    assert b"setSidebarOpen" in script.body
+    assert b'elements.conversationPanel.setAttribute("inert", "")' in script.body
+    assert b'item.setAttribute("role", "alert")' in script.body
+    assert b'aria-label="Play ${escapeHtml(label)}"' in script.body
     assert b"button.title = mode.description" in script.body
     assert b"state.chat.messages = state.chat.messages.filter" in script.body
+    assert b'aria-controls="sidebar"' in index.body
+    assert b'aria-pressed="false"' in index.body
+    assert b'id="attach-button"' in index.body
+    assert b".message-group.has-assets .message-bubble" in styles.body
+    assert b"width: 44px" in styles.body
     assert b"module.exports" in audio_script.body
 
 

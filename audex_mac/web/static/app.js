@@ -9,11 +9,13 @@ const state = {
   busy: false,
   recorder: null,
   recordTimer: null,
+  recordingEpoch: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   sidebar: $("#sidebar"),
+  conversationPanel: document.querySelector(".conversation-panel"),
   chatList: $("#chat-list"),
   chatCount: $("#chat-count"),
   newChat: $("#new-chat"),
@@ -29,6 +31,7 @@ const elements = {
   composer: $("#composer"),
   input: $("#message-input"),
   file: $("#audio-file"),
+  attach: $("#attach-button"),
   record: $("#record-button"),
   recordTime: $("#record-time"),
   send: $("#send-button"),
@@ -38,8 +41,12 @@ const elements = {
   audioDuration: $("#audio-duration"),
   clearAudio: $("#clear-audio"),
   mobileMenu: $("#mobile-menu"),
+  sidebarClose: $("#sidebar-close"),
+  sidebarBackdrop: $("#sidebar-backdrop"),
   toasts: $("#toast-stack"),
 };
+
+const narrowLayout = window.matchMedia("(max-width: 720px)");
 
 const modeGlyphs = {
   "text-text": "Aa",
@@ -93,6 +100,7 @@ function sortUpdated(a, b) {
 
 async function createChat() {
   if (state.busy) return;
+  cancelRecording();
   try {
     const payload = await api("/api/chats", {
       method: "POST",
@@ -108,12 +116,14 @@ async function createChat() {
 
 async function openChat(chatId, provided = null) {
   if (state.busy) return;
+  cancelRecording();
+  clearAudio();
+  const drawerWasOpen = elements.sidebar.classList.contains("open");
   try {
     state.chat = provided || (await api(`/api/chats/${chatId}`)).chat;
     state.mode = state.chat.current_mode;
-    clearAudio();
     renderAll();
-    elements.sidebar.classList.remove("open");
+    setSidebarOpen(false, { restoreFocus: drawerWasOpen });
     requestAnimationFrame(scrollToBottom);
   } catch (error) {
     toast(error.message);
@@ -182,6 +192,7 @@ function renderModeDock() {
 
 function selectMode(modeId) {
   if (state.busy || state.mode === modeId) return;
+  cancelRecording();
   state.mode = modeId;
   clearAudio();
   renderHeader();
@@ -215,7 +226,7 @@ function renderMessages() {
 
 function messageElement(message) {
   const group = document.createElement("article");
-  group.className = `message-group ${message.role}`;
+  group.className = `message-group ${message.role}${(message.assets || []).length ? " has-assets" : ""}`;
   const mode = modeById(message.mode);
   const speaker = message.role === "user" ? "You" : "Audex";
   const transcriptLabel = message.role === "user" && mode.input_kind === "speech"
@@ -227,8 +238,9 @@ function messageElement(message) {
         : message.role === "assistant" && mode.output_kind === "audio"
           ? "Generation summary"
           : "";
+  const audioLabel = `${speaker} ${mode.label} audio`;
   const audio = message.audio_url
-    ? `<audio class="message-audio" controls preload="metadata" src="${escapeHtml(message.audio_url)}"></audio>`
+    ? `<audio class="message-audio" controls preload="metadata" aria-label="${escapeHtml(audioLabel)}" src="${escapeHtml(message.audio_url)}"></audio>`
     : "";
   const assets = (message.assets || []).length
     ? `<div class="sound-assets">${message.assets.map(soundCard).join("")}</div>`
@@ -243,10 +255,11 @@ function messageElement(message) {
 }
 
 function soundCard(asset, index) {
+  const label = asset.label || `Sound ${index + 1}`;
   return `<article class="sound-card">
-    <strong>${escapeHtml(asset.label || `Sound ${index + 1}`)}</strong>
+    <strong>${escapeHtml(label)}</strong>
     ${asset.caption ? `<p>${escapeHtml(asset.caption)}</p>` : ""}
-    ${asset.audio_url ? `<audio controls preload="metadata" src="${escapeHtml(asset.audio_url)}"></audio>` : ""}
+    ${asset.audio_url ? `<audio controls preload="metadata" aria-label="Play ${escapeHtml(label)}" src="${escapeHtml(asset.audio_url)}"></audio>` : ""}
   </article>`;
 }
 
@@ -255,7 +268,7 @@ function updateComposer() {
   const showText = mode.input_kind !== "speech";
   elements.input.classList.toggle("hidden", !showText);
   elements.record.classList.toggle("hidden", mode.input_kind === "text");
-  elements.file.parentElement.classList.toggle("hidden", mode.input_kind !== "audio");
+  elements.attach.classList.toggle("hidden", mode.input_kind !== "audio");
   elements.input.placeholder = mode.input_kind === "audio"
     ? mode.output_kind === "text"
       ? "Ask about this audio (optional)…"
@@ -399,30 +412,65 @@ function clearAudio() {
 async function toggleRecording() {
   if (state.recorder) {
     const recording = state.recorder;
+    const chatId = state.chat?.id;
+    const modeId = state.mode;
     state.recorder = null;
-    clearInterval(state.recordTimer);
-    elements.record.classList.remove("recording");
-    elements.recordTime.textContent = "0:00";
+    const completionEpoch = ++state.recordingEpoch;
+    resetRecordingUi();
     const blob = await recording.stop();
+    if (
+      completionEpoch !== state.recordingEpoch
+      || state.chat?.id !== chatId
+      || state.mode !== modeId
+    ) return;
     setAudio(blob, `audex-recording-${Date.now()}.wav`);
     if (currentMode().input_kind === "speech") {
       elements.composer.requestSubmit();
     }
     return;
   }
+  const requestEpoch = ++state.recordingEpoch;
   try {
-    state.recorder = await createWavRecorder();
-    state.recorder.start();
+    const recorder = await createWavRecorder();
+    if (requestEpoch !== state.recordingEpoch) {
+      await recorder.cancel();
+      return;
+    }
+    state.recorder = recorder;
+    recorder.start();
     elements.record.classList.add("recording");
+    elements.record.setAttribute("aria-label", "Stop recording");
+    elements.record.setAttribute("aria-pressed", "true");
+    elements.record.dataset.tooltip = "Stop recording";
     const started = Date.now();
     state.recordTimer = setInterval(() => {
       const elapsed = Math.floor((Date.now() - started) / 1000);
       elements.recordTime.textContent = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
     }, 250);
   } catch (error) {
+    if (requestEpoch !== state.recordingEpoch) return;
     state.recorder = null;
+    resetRecordingUi();
     toast(`Microphone unavailable: ${error.message}`);
   }
+}
+
+function resetRecordingUi() {
+  clearInterval(state.recordTimer);
+  state.recordTimer = null;
+  elements.record.classList.remove("recording");
+  elements.record.setAttribute("aria-label", "Record speech");
+  elements.record.setAttribute("aria-pressed", "false");
+  elements.record.dataset.tooltip = "Record speech";
+  elements.recordTime.textContent = "0:00";
+}
+
+function cancelRecording() {
+  state.recordingEpoch += 1;
+  const recording = state.recorder;
+  state.recorder = null;
+  resetRecordingUi();
+  if (recording) void recording.cancel().catch(() => {});
 }
 
 async function createWavRecorder() {
@@ -433,21 +481,29 @@ async function createWavRecorder() {
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
   const chunks = [];
+  let closed = false;
   processor.onaudioprocess = (event) => chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  async function close() {
+    if (closed) return;
+    closed = true;
+    processor.onaudioprocess = null;
+    try { processor.disconnect(); } catch (_error) { /* already disconnected */ }
+    try { source.disconnect(); } catch (_error) { /* already disconnected */ }
+    stream.getTracks().forEach((track) => track.stop());
+    if (context.state !== "closed") await context.close();
+  }
   return {
     start() {
       source.connect(processor);
       processor.connect(context.destination);
     },
     async stop() {
-      processor.disconnect();
-      source.disconnect();
-      stream.getTracks().forEach((track) => track.stop());
       const samples = mergeSamples(chunks);
       const downsampled = downsample(samples, context.sampleRate, 16000);
-      await context.close();
+      await close();
       return encodeWav(downsampled, 16000);
     },
+    cancel: close,
   };
 }
 
@@ -487,6 +543,7 @@ function scrollToBottom() {
 function toast(message) {
   const item = document.createElement("div");
   item.className = "toast";
+  item.setAttribute("role", "alert");
   item.textContent = message;
   elements.toasts.append(item);
   setTimeout(() => item.remove(), 6000);
@@ -527,16 +584,55 @@ elements.title.addEventListener("keydown", (event) => {
   if (event.key === "Enter") { event.preventDefault(); elements.title.blur(); }
   if (event.key === "Escape") { elements.title.value = state.chat?.title || "Audex"; elements.title.blur(); }
 });
+elements.attach.addEventListener("click", () => elements.file.click());
 elements.file.addEventListener("change", chooseAudio);
 elements.record.addEventListener("click", toggleRecording);
 elements.clearAudio.addEventListener("click", clearAudio);
-elements.mobileMenu.addEventListener("click", () => elements.sidebar.classList.toggle("open"));
-$("#sidebar-toggle").addEventListener("click", () => elements.sidebar.classList.remove("open"));
+elements.mobileMenu.addEventListener("click", () => {
+  setSidebarOpen(!elements.sidebar.classList.contains("open"));
+});
+elements.sidebarClose.addEventListener("click", () => setSidebarOpen(false, { restoreFocus: true }));
+elements.sidebarBackdrop.addEventListener("click", () => setSidebarOpen(false, { restoreFocus: true }));
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && elements.sidebar.classList.contains("open")) {
+    event.preventDefault();
+    setSidebarOpen(false, { restoreFocus: true });
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
     event.preventDefault();
     createChat();
   }
 });
+narrowLayout.addEventListener("change", () => setSidebarOpen(false));
+window.addEventListener("pagehide", cancelRecording);
 
+function setSidebarOpen(open, { restoreFocus = false } = {}) {
+  const isNarrow = narrowLayout.matches;
+  const nextOpen = isNarrow && open;
+  elements.sidebar.classList.toggle("open", nextOpen);
+  elements.sidebarBackdrop.classList.toggle("hidden", !nextOpen);
+  elements.mobileMenu.setAttribute("aria-expanded", String(nextOpen));
+  elements.mobileMenu.setAttribute("aria-label", nextOpen ? "Hide conversations" : "Show conversations");
+  if (isNarrow) {
+    elements.sidebar.toggleAttribute("inert", !nextOpen);
+    elements.sidebar.setAttribute("aria-hidden", String(!nextOpen));
+    if (nextOpen) {
+      elements.sidebarClose.focus();
+      elements.conversationPanel.setAttribute("inert", "");
+      elements.conversationPanel.setAttribute("aria-hidden", "true");
+    } else {
+      elements.conversationPanel.removeAttribute("inert");
+      elements.conversationPanel.removeAttribute("aria-hidden");
+    }
+  } else {
+    elements.sidebar.removeAttribute("inert");
+    elements.sidebar.removeAttribute("aria-hidden");
+    elements.conversationPanel.removeAttribute("inert");
+    elements.conversationPanel.removeAttribute("aria-hidden");
+  }
+  if (!nextOpen && restoreFocus && isNarrow) elements.mobileMenu.focus();
+}
+
+setSidebarOpen(false);
 bootstrap();

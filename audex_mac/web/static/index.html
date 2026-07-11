@@ -17,7 +17,7 @@
     <div class="app-shell">
       <aside class="sidebar" id="sidebar">
         <header class="brand-row">
-          <button class="brand" id="sidebar-toggle" aria-label="Toggle conversations">
+          <div class="brand">
             <span class="brand-mark" aria-hidden="true">
               <i></i><i></i><i></i><i></i><i></i>
             </span>
@@ -25,7 +25,8 @@
               <strong>Audex</strong>
               <small>Local audio intelligence</small>
             </span>
-          </button>
+          </div>
+          <button class="sidebar-close" id="sidebar-close" type="button" aria-label="Close conversations">×</button>
         </header>
 
         <button class="new-chat-button" id="new-chat">
@@ -50,10 +51,22 @@
           </div>
         </footer>
       </aside>
+      <button
+        class="sidebar-backdrop hidden"
+        id="sidebar-backdrop"
+        type="button"
+        aria-label="Close conversations"
+      ></button>
 
       <main class="conversation-panel">
         <header class="conversation-header">
-          <button class="mobile-menu" id="mobile-menu" aria-label="Show conversations">
+          <button
+            class="mobile-menu"
+            id="mobile-menu"
+            aria-label="Show conversations"
+            aria-controls="sidebar"
+            aria-expanded="false"
+          >
             <span></span><span></span><span></span>
           </button>
           <div class="title-wrap">
@@ -84,9 +97,15 @@
           <div class="mode-dock" id="mode-dock" role="list"></div>
         </section>
 
-        <section class="message-scroll" id="message-scroll" aria-live="polite">
+        <section
+          class="message-scroll"
+          id="message-scroll"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+        >
           <div class="messages" id="messages"></div>
-          <div class="thinking hidden" id="thinking">
+          <div class="thinking hidden" id="thinking" role="status" aria-live="polite">
             <span class="audex-avatar mini" aria-hidden="true">A</span>
             <span class="typing-bubble"><i></i><i></i><i></i></span>
             <span id="thinking-label">Audex is thinking</span>
@@ -104,10 +123,16 @@
           </div>
 
           <form class="composer" id="composer">
-            <label class="attach-button tooltip" data-tooltip="Choose an audio file">
-              <input id="audio-file" type="file" accept="audio/*" hidden />
+            <button
+              class="attach-button tooltip"
+              id="attach-button"
+              type="button"
+              data-tooltip="Choose an audio file"
+              aria-label="Choose an audio file"
+            >
               <span aria-hidden="true">＋</span>
-            </label>
+            </button>
+            <input id="audio-file" type="file" accept="audio/*" hidden />
             <textarea
               id="message-input"
               rows="1"
@@ -121,6 +146,7 @@
               type="button"
               data-tooltip="Record speech"
               aria-label="Record speech"
+              aria-pressed="false"
             >
               <span class="mic-icon" aria-hidden="true"></span>
               <span class="record-time" id="record-time">0:00</span>

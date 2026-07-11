@@ -100,6 +100,9 @@ button {
 }
 
 .brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 2px 4px 18px;
 }
 
@@ -110,6 +113,21 @@ button {
   padding: 0;
   text-align: left;
   background: transparent;
+}
+
+.sidebar-close {
+  display: none;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 21px;
+}
+
+.sidebar-backdrop {
+  display: none;
 }
 
 .brand strong {
@@ -468,7 +486,7 @@ button {
   position: relative;
   display: flex;
   min-width: max-content;
-  height: 37px;
+  height: 40px;
   align-items: center;
   gap: 7px;
   padding: 0 11px;
@@ -486,7 +504,8 @@ button {
   border-color: rgba(167, 139, 250, 0.4);
   color: #f1edff;
   background: rgba(124, 92, 255, 0.12);
-  outline: none;
+  outline: 2px solid rgba(153, 200, 255, 0.72);
+  outline-offset: 2px;
   transform: translateY(-1px);
 }
 
@@ -617,6 +636,7 @@ button {
 }
 
 .starter {
+  min-height: 44px;
   padding: 12px 13px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -683,6 +703,11 @@ button {
   backdrop-filter: blur(18px);
 }
 
+.message-group.has-assets .message-bubble {
+  width: min(700px, 86%);
+  max-width: 100%;
+}
+
 .message-bubble p {
   margin: 0;
   white-space: pre-wrap;
@@ -710,7 +735,7 @@ button {
 
 .sound-assets {
   display: grid;
-  width: min(660px, 80vw);
+  width: 100%;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
   margin-top: 10px;
@@ -827,8 +852,8 @@ button {
 .send-button {
   position: relative;
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: 12px;
@@ -912,8 +937,8 @@ button {
 
 .audio-preview button {
   display: grid;
-  width: 21px;
-  height: 21px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border-radius: 7px;
   color: var(--muted);
@@ -986,12 +1011,21 @@ button {
     transition: transform 240ms var(--ease);
   }
   .sidebar.open { transform: none; }
+  .sidebar-close { display: grid; }
+  .sidebar-backdrop {
+    position: fixed;
+    z-index: 19;
+    inset: 0;
+    display: block;
+    background: rgba(4, 3, 12, 0.58);
+    backdrop-filter: blur(2px);
+  }
   .conversation-panel { height: 100%; grid-template-rows: 62px auto minmax(0, 1fr) auto; }
   .conversation-header { padding: 0 14px; }
   .mobile-menu {
     display: flex;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -1009,6 +1043,9 @@ button {
   .thinking { width: calc(100% - 24px); }
   .composer-zone { padding: 7px 10px 9px; }
   .composer-hint { display: none; }
+  .mode-button { height: 44px; }
+  .attach-button, .record-button, .send-button { width: 44px; height: 44px; }
+  .audio-preview button { width: 44px; height: 44px; }
 }
 
 @media (max-width: 460px) {
@@ -1018,7 +1055,6 @@ button {
   .starter-grid, .sound-assets { grid-template-columns: 1fr; }
   .empty-state { padding-inline: 5px; }
   .message-bubble p { font-size: 13px; }
-  .attach-button, .record-button, .send-button { width: 33px; height: 33px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
