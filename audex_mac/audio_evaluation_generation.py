@@ -77,6 +77,20 @@ class TtaOutputInspection:
     def valid(self) -> bool:
         return not self.failures
 
+    def usable_early_preview(self, *, minimum_duration_seconds: float) -> bool:
+        """Whether a deliberate early end is safe to decode for creative audition.
+
+        Autonomous evaluation remains strict through ``valid``.  This narrower
+        policy only admits complete RVQ frames followed by the model's explicit
+        end token; malformed or truncated streams remain failures.
+        """
+
+        return (
+            self.failures == ("incomplete_target",)
+            and self.reached_end_token
+            and self.duration_seconds >= minimum_duration_seconds
+        )
+
 
 def build_tta_requests(
     tokenizer: Any,

@@ -20,6 +20,7 @@ class FakeAsyncRuntime:
     def __init__(self) -> None:
         self.tokenizer = FakeTtaTokenizer()
         self.requests: list[Any] = []
+        self.request_batches: list[tuple[Any, ...]] = []
         self.loop_ids: list[int] = []
 
     async def generate_one_final(self, request: Any) -> VllmRequestResult:
@@ -41,27 +42,44 @@ class FakeAsyncRuntime:
         import asyncio
 
         self.loop_ids.append(id(asyncio.get_running_loop()))
+        self.request_batches.append(requests)
         self.requests.extend(requests)
         end = self.tokenizer.get_vocab()["<audiogen_end>"]
-        return (
+        valid_tokens = tuple(
+            self.tokenizer.codec_token_id(index)
+            for index in _phase_valid_codec_ids(2000)
+        )
+        return tuple(
             VllmRequestResult(
                 text="",
-                token_ids=tuple(
-                    self.tokenizer.codec_token_id(index)
-                    for index in _phase_valid_codec_ids(2000)
-                )
-                + (end,),
+                token_ids=(valid_tokens + (end,)) if index % 2 == 0 else (end,),
                 elapsed_seconds=1.5,
                 finish_reason="stop",
-                request_debug_name=requests[0].debug_name,
-            ),
+                request_debug_name=request.debug_name,
+            )
+            for index, request in enumerate(requests)
+        )
+
+
+class FakeEarlyEndRuntime(FakeAsyncRuntime):
+    async def generate_many_final(
+        self, requests: tuple[Any, ...]
+    ) -> tuple[VllmRequestResult, ...]:
+        self.request_batches.append(requests)
+        end = self.tokenizer.get_vocab()["<audiogen_end>"]
+        early_tokens = tuple(
+            self.tokenizer.codec_token_id(index)
+            for index in _phase_valid_codec_ids(400)
+        )
+        return tuple(
             VllmRequestResult(
                 text="",
-                token_ids=(end,),
-                elapsed_seconds=1.5,
+                token_ids=(early_tokens + (end,)) if index % 2 == 0 else (end,),
+                elapsed_seconds=0.5,
                 finish_reason="stop",
-                request_debug_name=requests[1].debug_name,
-            ),
+                request_debug_name=request.debug_name,
+            )
+            for index, request in enumerate(requests)
         )
 
 
@@ -127,9 +145,9 @@ def _understanding_case(audio_path: Path) -> AudioEvaluationCase:
     )
 
 
-def _generation_case() -> AudioEvaluationCase:
+def _generation_case(case_id: str = "audiocaps-1") -> AudioEvaluationCase:
     return AudioEvaluationCase(
-        case_id="audiocaps-1",
+        case_id=case_id,
         track=EvaluationTrack.GENERATION,
         dataset_id="fixture",
         dataset_revision="rev",
@@ -208,6 +226,76 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert attempt.signal_metrics["sample_delta_peak"] > 0.0
     assert attempt.signal_metrics["zero_crossing_rate"] > 0.0
     assert attempt.finish_reason == "stop"
+
+
+@pytest.mark.fast
+def test_generation_adapter_submits_multiple_cfg_pairs_as_one_vllm_batch(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeAsyncRuntime()
+    decoded: list[str] = []
+
+    def decoder(
+        inspection: TtaOutputInspection,
+        destination: Path,
+        case: AudioEvaluationCase,
+    ) -> None:
+        assert inspection.valid
+        decoded.append(case.case_id)
+        _write_tone_wav(destination)
+
+    attempts = AudexVllmTtaGenerationAdapter(
+        runtime=runtime,
+        raw_dir=tmp_path / "raw",
+        enhanced_dir=tmp_path / "enhanced",
+        decode_to_wav=decoder,
+    ).generate_many(
+        (
+            (_generation_case("sound-1"), 111),
+            (_generation_case("sound-2"), 222),
+        )
+    )
+
+    assert len(runtime.request_batches) == 1
+    assert len(runtime.request_batches[0]) == 4
+    assert [
+        request.sampling.extra_args["cfg_role"] for request in runtime.requests
+    ] == [
+        "cond",
+        "uncond",
+        "cond",
+        "uncond",
+    ]
+    assert len(attempts) == 2
+    assert decoded == ["sound-1", "sound-2"]
+
+
+@pytest.mark.fast
+def test_generation_adapter_decodes_clean_early_end_only_when_enabled(
+    tmp_path: Path,
+) -> None:
+    decoded: list[float] = []
+
+    def decoder(
+        inspection: TtaOutputInspection,
+        destination: Path,
+        case: AudioEvaluationCase,
+    ) -> None:
+        del case
+        decoded.append(inspection.duration_seconds)
+        _write_tone_wav(destination)
+
+    attempt = AudexVllmTtaGenerationAdapter(
+        runtime=FakeEarlyEndRuntime(),
+        raw_dir=tmp_path / "raw",
+        decode_to_wav=decoder,
+        allow_early_preview_seconds=1.0,
+    ).generate(_generation_case(), seed=456)
+
+    assert attempt.structure.valid is False
+    assert attempt.structure.failures == ("incomplete_target",)
+    assert decoded == [2.0]
+    assert attempt.signal_metrics["nonempty"] is True
 
 
 @pytest.mark.fast

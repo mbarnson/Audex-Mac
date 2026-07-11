@@ -123,22 +123,52 @@ class SoundLabCatalog:
         wav_path: Path,
         duration_seconds: float,
         elapsed_seconds: float,
+        seed_used: int,
     ) -> None:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE candidates
                 SET state = 'ready', wav_path = ?, duration_seconds = ?,
-                    elapsed_seconds = ?, updated_at = ?
+                    elapsed_seconds = ?, seed = ?, updated_at = ?
                 WHERE asset_id = ?
                 """,
                 (
                     str(Path(wav_path).resolve()),
                     duration_seconds,
                     elapsed_seconds,
+                    seed_used,
                     _now(),
                     asset_id,
                 ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown Sound Lab asset: {asset_id}")
+
+    def record_candidate_attempts(
+        self,
+        asset_id: str,
+        *,
+        attempts: tuple[Any, ...],
+    ) -> None:
+        payload = [
+            {
+                "seed": attempt.seed,
+                "elapsed_seconds": attempt.elapsed_seconds,
+                "frame_count": attempt.frame_count,
+                "duration_seconds": attempt.duration_seconds,
+                "reached_end_token": attempt.reached_end_token,
+                "failures": list(attempt.failures),
+            }
+            for attempt in attempts
+        ]
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE candidates SET generation_attempts_json = ?, updated_at = ?
+                WHERE asset_id = ?
+                """,
+                (json.dumps(payload, sort_keys=True), _now(), asset_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"unknown Sound Lab asset: {asset_id}")
@@ -303,6 +333,9 @@ class SoundLabCatalog:
                     "difference": candidate["difference_note"],
                     "seed": candidate["seed"],
                     "recipe": candidate["recipe"],
+                    "generation_attempts": json.loads(
+                        candidate["generation_attempts_json"]
+                    ),
                 }
             )
         return item
@@ -340,6 +373,7 @@ class SoundLabCatalog:
                     wav_path TEXT,
                     duration_seconds REAL,
                     elapsed_seconds REAL,
+                    generation_attempts_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(job_id, blind_label)
@@ -364,6 +398,12 @@ class SoundLabCatalog:
                 "jobs",
                 "designer_repair_used",
                 "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                connection,
+                "candidates",
+                "generation_attempts_json",
+                "TEXT NOT NULL DEFAULT '[]'",
             )
 
     def _set_candidate_state(

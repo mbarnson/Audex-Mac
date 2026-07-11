@@ -86,11 +86,13 @@ class AudexVllmTtaGenerationAdapter:
         raw_dir: Path,
         enhanced_dir: Path | None = None,
         decode_to_wav: Callable[[TtaOutputInspection, Path, AudioEvaluationCase], None],
+        allow_early_preview_seconds: float | None = None,
     ) -> None:
         self._runtime = runtime
         self._raw_dir = raw_dir
         self._enhanced_dir = enhanced_dir or (raw_dir.parent / "enhanced")
         self._decode_to_wav = decode_to_wav
+        self._allow_early_preview_seconds = allow_early_preview_seconds
 
     def generate(
         self,
@@ -98,16 +100,36 @@ class AudexVllmTtaGenerationAdapter:
         *,
         seed: int,
     ) -> GenerationAttempt:
-        caption = case.caption or case.prompt
-        cond, uncond = build_tta_requests(
-            self._runtime.tokenizer,
-            caption=caption,
-            case_id=case.case_id,
-            seed=seed,
-        )
-        cond_result, _uncond_result = _run_async(
-            self._runtime.generate_many_final((cond, uncond))
-        )
+        return self.generate_many(((case, seed),))[0]
+
+    def generate_many(
+        self,
+        cases: tuple[tuple[AudioEvaluationCase, int], ...],
+    ) -> tuple[GenerationAttempt, ...]:
+        """Submit every CFG pair together, then decode attempts in case order."""
+
+        if not cases:
+            return ()
+        requests: list[Any] = []
+        for case, seed in cases:
+            caption = case.caption or case.prompt
+            requests.extend(
+                build_tta_requests(
+                    self._runtime.tokenizer,
+                    caption=caption,
+                    case_id=case.case_id,
+                    seed=seed,
+                )
+            )
+        results = _run_async(self._runtime.generate_many_final(tuple(requests)))
+        attempts: list[GenerationAttempt] = []
+        for index, (case, _seed) in enumerate(cases):
+            attempts.append(self._decode_attempt(case, results[index * 2]))
+        return tuple(attempts)
+
+    def _decode_attempt(
+        self, case: AudioEvaluationCase, cond_result: Any
+    ) -> GenerationAttempt:
         inspection = inspect_tta_output(
             self._runtime.tokenizer,
             cond_result.token_ids,
@@ -115,7 +137,13 @@ class AudexVllmTtaGenerationAdapter:
         self._raw_dir.mkdir(parents=True, exist_ok=True)
         raw_wav_path = self._raw_dir / f"{case.case_id}.wav"
         enhanced_wav_path: Path | None = None
-        if inspection.valid:
+        should_decode = inspection.valid or (
+            self._allow_early_preview_seconds is not None
+            and inspection.usable_early_preview(
+                minimum_duration_seconds=self._allow_early_preview_seconds
+            )
+        )
+        if should_decode:
             self._decode_to_wav(inspection, raw_wav_path, case)
             enhanced_wav_path = self._enhanced_dir / f"{case.case_id}.wav"
             _write_48k_stereo_reference_wav(raw_wav_path, enhanced_wav_path)

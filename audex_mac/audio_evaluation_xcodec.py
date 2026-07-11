@@ -41,12 +41,14 @@ class XCodec1WavDecoder:
         codec_loader: Callable[[XCodec1Config], Any] | None = None,
         torch_module: Any | None = None,
         sample_rate: int = 16_000,
+        allow_early_preview_seconds: float | None = None,
     ) -> None:
         self.config = config
         self._codec_loader = codec_loader or load_xcodec1_model
         self._torch_module = torch_module
         self._codec: Any | None = None
         self.sample_rate = sample_rate
+        self.allow_early_preview_seconds = allow_early_preview_seconds
 
     def __call__(
         self,
@@ -60,6 +62,7 @@ class XCodec1WavDecoder:
             inspection,
             torch_module=self._torch_module,
             device=self.config.device,
+            allow_early_preview_seconds=self.allow_early_preview_seconds,
         )
         _write_pcm16_wav(destination, waveform, sample_rate=self.sample_rate)
 
@@ -176,10 +179,17 @@ def decode_xcodec1_inspection(
     *,
     torch_module: Any | None = None,
     device: str = "auto",
+    allow_early_preview_seconds: float | None = None,
 ) -> tuple[float, ...]:
     """Decode valid flat interleaved RVQ codec IDs to mono waveform samples."""
 
-    if not inspection.valid:
+    preview_allowed = (
+        allow_early_preview_seconds is not None
+        and inspection.usable_early_preview(
+            minimum_duration_seconds=allow_early_preview_seconds
+        )
+    )
+    if not inspection.valid and not preview_allowed:
         raise ValueError(f"cannot decode invalid TTA structure: {inspection.failures}")
     if not inspection.codec_ids:
         raise ValueError("cannot decode empty TTA codec stream")

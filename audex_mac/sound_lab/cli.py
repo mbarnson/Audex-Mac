@@ -23,6 +23,7 @@ from ..audio_model_resolver import (
     resolve_cached_audio_model,
 )
 from .adapters import (
+    MINIMUM_EARLY_PREVIEW_SECONDS,
     AudexSoundLabPlanner,
     AudexTtaSoundGenerator,
     AudexVariantDesigner,
@@ -71,7 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Audex Sound Lab: loading {model_repo}...", flush=True)
     runtime = load_audio_vllm_runtime(model_path, args.profile)
-    decoder = XCodec1WavDecoder(xcodec_config)
+    decoder = XCodec1WavDecoder(
+        xcodec_config,
+        allow_early_preview_seconds=MINIMUM_EARLY_PREVIEW_SECONDS,
+    )
     root = DEFAULT_SOUND_LAB_ROOT.resolve()
     catalog = SoundLabCatalog(root / "catalog.sqlite3")
     board = SoundLabBoard(

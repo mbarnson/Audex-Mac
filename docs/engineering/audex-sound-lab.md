@@ -20,9 +20,29 @@ The working near-real-time conversation path remains isolated.
 
 Phase 1 is implemented as a typed vertical slice through `./sound.sh`. It uses a
 single persistent Audex/vLLM Metal runtime for strict tool planning, designed
-variant captions, and sequential CFG3 text-to-audio generation. The local blind
-board opens automatically, publishes each completed XCodec WAV, records a
-winner and note, and persists recipes and artifacts under `.audex/sound-lab/`.
+variant captions, and continuously batched CFG3 text-to-audio generation. One
+five-way audition is submitted as ten lockstep conditional/unconditional
+sequences instead of five serial two-sequence jobs. `sound.sh` gives this bounded
+workload an 8K engine context and ten non-paged KV slots; those settings are
+scoped to Sound Lab and do not change `start.sh`. The local blind board opens
+automatically, publishes complete XCodec WAVs, records a winner and note, and
+persists recipes and artifacts under `.audex/sound-lab/`.
+
+Generation failures use a separate exploratory policy from the autonomous
+benchmark. The benchmark still requires its pinned ten-second target. Sound Lab
+also accepts an explicit model end after at least one second when the RVQ frames
+and token phases are otherwise clean: a short bark or impact is a legitimate
+sound, not necessarily a failed ten-second sound. Tiny or malformed candidates
+are retried once, together in one smaller batch with deterministic alternate
+seeds. A second failure remains in the catalog with failure classes, frame count,
+duration, and end-token status.
+
+Every initial and retry attempt retains its actual seed, timing, frame count,
+duration, end-token status, and failure classes; a recovered candidate reveals
+the retry seed that actually produced its WAV. First-pass successes are yielded
+to the catalog before the retry batch begins, so a retry-engine failure cannot
+turn an already-ready candidate into a failure. The production XCodec decoder
+uses the same explicit early-preview policy as the token inspector.
 
 This is deliberately not described as the complete v1 product. The terminal is
 render-blocking in Phase 1. Explicit scheduler work classes, concurrent parent
@@ -31,10 +51,11 @@ catalog memory remain Phases 2 through 4 below. `start.sh` behavior remains
 unchanged.
 
 Local validation on 2026-07-10: `scripts/lint.sh` passed and
-`.venv/bin/python -m pytest -m fast` passed 741 tests with 3 intentionally
+`.venv/bin/python -m pytest -m fast` passed 748 tests with 3 intentionally
 deselected. The loopback board integration used a real ephemeral HTTP server.
-This validates the host-side Phase 1 contracts; a model-backed CFG3/XCodec
-audition remains an owner-run Apple Silicon acceptance test.
+An owner-run Apple Silicon audition produced recognizable dog barks through the
+full CFG3/XCodec path. The continuous-batch and bounded-retry revision still
+requires an owner-run timing and listening pass.
 
 ## Why Build It
 
@@ -534,7 +555,10 @@ the agreed product release by itself. Phase 5 is optional follow-on work.
 - load one persistent runtime;
 - accept typed prompt input before adding microphone interaction;
 - validate one `render_sounds` tool call;
-- generate a small designed CFG3 batch through the existing full TTA adapter;
+- generate a small designed CFG3 batch through the existing full TTA adapter,
+  with every CFG pair continuously scheduled in one engine submission;
+- salvage structurally clean early endings, retry unusable candidates once as a
+  smaller batch, and retain actionable failure diagnostics;
 - save artifacts and a minimal SQLite catalog;
 - display blind candidates on an automatically opened local board;
 - record a winner, rejection, and note;

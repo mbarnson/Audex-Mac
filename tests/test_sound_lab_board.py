@@ -32,7 +32,11 @@ def test_board_serves_blind_audio_and_records_audition(tmp_path: Path) -> None:
     wav = tmp_path / "asset-1.wav"
     wav.write_bytes(b"RIFFblind-audio")
     catalog.mark_candidate_ready(
-        "asset-1", wav_path=wav, duration_seconds=10.0, elapsed_seconds=2.0
+        "asset-1",
+        wav_path=wav,
+        duration_seconds=10.0,
+        elapsed_seconds=2.0,
+        seed_used=1,
     )
     opened: list[str] = []
 

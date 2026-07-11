@@ -56,9 +56,18 @@ through a separate entrypoint:
 Type a request such as `audition five genuinely different explosion sounds`.
 Audex first emits a validated Nemotron XML tool call, then uses the same loaded
 model to design distinct captions and render them with NVIDIA's CFG3
-text-to-audio recipe. A loopback-only browser board opens automatically and
-shows a blind A-E rack. Each candidate becomes playable as soon as its complete
-XCodec WAV is ready; prompts and seeds remain hidden until reveal.
+text-to-audio recipe. All requested CFG pairs are submitted to vLLM Metal as one
+continuous batch; unusable candidates receive one bounded retry without holding
+successful candidates to the same retry. A loopback-only browser board opens
+automatically and shows a blind A-E rack. Complete XCodec WAVs are playable on
+the board; prompts and seeds remain hidden until reveal.
+
+Short sounds are allowed to end naturally. Sound Lab accepts a structurally
+clean model end after at least one second even though the reproducible evaluation
+harness retains its strict ten-second generation target. Failures remain in the
+local catalog with token-structure and duration diagnostics. Initial and retry
+attempts retain their actual seeds and timing; successful first-pass candidates
+are published before a retry batch begins.
 
 Sound Lab stores its SQLite catalog and WAV artifacts under
 `.audex/sound-lab/`, which is excluded from Git. If XCodec1 is not already

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,9 @@ from ..audio_evaluation_adapters import (
 from ..vllm_sts_requests import build_text_messages_response_request
 from .session import (
     GeneratedSound,
+    SoundGenerationAttempt,
+    SoundGenerationOutcome,
+    SoundGenerationRequest,
     VariantBrief,
     VariantDesignError,
     VariantDesignResult,
@@ -26,6 +30,8 @@ from .tools import RenderSoundsCall, parse_sound_lab_tool_call
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _PLANNER_MAX_TOKENS = 768
 _DESIGNER_MAX_TOKENS = 1536
+MINIMUM_EARLY_PREVIEW_SECONDS = 1.0
+_RETRY_SEED_XOR = 0x5A17_D3C9
 
 _RENDER_SOUNDS_TOOL = {
     "type": "function",
@@ -213,48 +219,213 @@ class AudexVariantDesigner:
 class AudexTtaSoundGenerator:
     """Generate one CFG3 candidate through the complete XCodec WAV path."""
 
-    def __init__(self, *, runtime: Any, decode_to_wav: Any) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        decode_to_wav: Any,
+        adapter_factory: Callable[..., AudexVllmTtaGenerationAdapter] = (
+            AudexVllmTtaGenerationAdapter
+        ),
+    ) -> None:
         self._runtime = runtime
         self._decode_to_wav = decode_to_wav
+        self._adapter_factory = adapter_factory
 
-    def generate(
+    def generate_many(
         self,
-        variant: VariantBrief,
+        requests: tuple[SoundGenerationRequest, ...],
         *,
-        asset_id: str,
         output_dir: Path,
-    ) -> GeneratedSound:
-        case = AudioEvaluationCase(
-            case_id=asset_id,
-            track=EvaluationTrack.GENERATION,
-            dataset_id="audex-sound-lab",
-            dataset_revision="local-v1",
-            dataset_config="interactive",
-            dataset_split="session",
-            source_row_id=asset_id,
-            source_row_hash=asset_id,
-            license="user-directed-local-artifact",
-            category="interactive",
-            prompt=variant.caption,
-            caption=variant.caption,
+    ) -> Iterator[SoundGenerationOutcome]:
+        cases = tuple(
+            (
+                _generation_case(request.asset_id, request.variant),
+                request.variant.seed,
+            )
+            for request in requests
         )
-        attempt = AudexVllmTtaGenerationAdapter(
+        adapter = self._adapter_factory(
             runtime=self._runtime,
             raw_dir=output_dir / "raw",
             enhanced_dir=output_dir / "enhanced",
             decode_to_wav=self._decode_to_wav,
-        ).generate(case, seed=variant.seed)
-        if not attempt.structure.valid:
-            raise RuntimeError(
-                "Audex generated an invalid audio token stream: "
-                + "; ".join(attempt.structure.failures)
+            allow_early_preview_seconds=MINIMUM_EARLY_PREVIEW_SECONDS,
+        )
+        attempts = adapter.generate_many(cases)
+        retry_indexes: list[int] = []
+        for index, (request, attempt) in enumerate(
+            zip(requests, attempts, strict=True)
+        ):
+            if not _sound_lab_attempt_usable(attempt):
+                retry_indexes.append(index)
+                continue
+            yield _sound_lab_success(
+                request,
+                attempt,
+                seed_used=cases[index][1],
+                elapsed_seconds=attempt.elapsed_seconds,
+                attempts=(_attempt_record(attempt, seed=cases[index][1]),),
             )
-        wav_path = attempt.enhanced_wav_path or attempt.raw_wav_path
-        return GeneratedSound(
+
+        if not retry_indexes:
+            return
+        retry_cases = tuple(
+            (
+                cases[index][0],
+                cases[index][1] ^ _RETRY_SEED_XOR,
+            )
+            for index in retry_indexes
+        )
+        try:
+            retry_attempts = adapter.generate_many(retry_cases)
+        except Exception as exc:
+            for index in retry_indexes:
+                request = requests[index]
+                initial_seed = cases[index][1]
+                retry_seed = initial_seed ^ _RETRY_SEED_XOR
+                technical = _technical_attempt_record(seed=retry_seed, error=exc)
+                yield SoundGenerationOutcome(
+                    asset_id=request.asset_id,
+                    error=(
+                        "Audex retry batch failed; "
+                        f"initial=(seed={initial_seed}; "
+                        f"{_structure_summary(attempts[index].structure)}); "
+                        f"retry=(seed={retry_seed}; {technical.failures[0]})"
+                    ),
+                    attempts=(
+                        _attempt_record(attempts[index], seed=initial_seed),
+                        technical,
+                    ),
+                )
+            return
+        for index, retry_attempt in zip(retry_indexes, retry_attempts, strict=True):
+            request = requests[index]
+            first_attempt = attempts[index]
+            retry_seed = cases[index][1] ^ _RETRY_SEED_XOR
+            elapsed_seconds = (
+                first_attempt.elapsed_seconds + retry_attempt.elapsed_seconds
+            )
+            if _sound_lab_attempt_usable(retry_attempt):
+                yield _sound_lab_success(
+                    request,
+                    retry_attempt,
+                    seed_used=retry_seed,
+                    elapsed_seconds=elapsed_seconds,
+                    attempts=(
+                        _attempt_record(first_attempt, seed=cases[index][1]),
+                        _attempt_record(retry_attempt, seed=retry_seed),
+                    ),
+                )
+                continue
+            yield SoundGenerationOutcome(
+                asset_id=request.asset_id,
+                error=_sound_lab_failure(
+                    retry_attempt,
+                    first_attempt=first_attempt,
+                    initial_seed=cases[index][1],
+                    final_seed=retry_seed,
+                ),
+                attempts=(
+                    _attempt_record(first_attempt, seed=cases[index][1]),
+                    _attempt_record(retry_attempt, seed=retry_seed),
+                ),
+            )
+
+
+def _sound_lab_success(
+    request: SoundGenerationRequest,
+    attempt: Any,
+    *,
+    seed_used: int,
+    elapsed_seconds: float,
+    attempts: tuple[SoundGenerationAttempt, ...],
+) -> SoundGenerationOutcome:
+    wav_path = attempt.enhanced_wav_path or attempt.raw_wav_path
+    return SoundGenerationOutcome(
+        asset_id=request.asset_id,
+        generated=GeneratedSound(
             wav_path=wav_path,
             duration_seconds=attempt.structure.duration_seconds,
-            elapsed_seconds=attempt.elapsed_seconds,
+            elapsed_seconds=elapsed_seconds,
+            seed_used=seed_used,
+        ),
+        attempts=attempts,
+    )
+
+
+def _attempt_record(attempt: Any, *, seed: int) -> SoundGenerationAttempt:
+    structure = attempt.structure
+    return SoundGenerationAttempt(
+        seed=seed,
+        elapsed_seconds=attempt.elapsed_seconds,
+        frame_count=structure.frame_count,
+        duration_seconds=structure.duration_seconds,
+        reached_end_token=structure.reached_end_token,
+        failures=structure.failures,
+    )
+
+
+def _technical_attempt_record(*, seed: int, error: Exception) -> SoundGenerationAttempt:
+    return SoundGenerationAttempt(
+        seed=seed,
+        elapsed_seconds=0.0,
+        frame_count=0,
+        duration_seconds=0.0,
+        reached_end_token=False,
+        failures=(f"technical_failure: {type(error).__name__}: {error}",),
+    )
+
+
+def _sound_lab_attempt_usable(attempt: Any) -> bool:
+    return bool(attempt.structure.valid) or attempt.structure.usable_early_preview(
+        minimum_duration_seconds=MINIMUM_EARLY_PREVIEW_SECONDS
+    )
+
+
+def _sound_lab_failure(
+    attempt: Any,
+    *,
+    first_attempt: Any | None,
+    initial_seed: int,
+    final_seed: int,
+) -> str:
+    if first_attempt is None:
+        return (
+            "Audex generated an unusable audio token stream: "
+            f"seed={final_seed}; {_structure_summary(attempt.structure)}"
         )
+    return (
+        "Audex generated an unusable audio token stream after one retry; "
+        f"initial=(seed={initial_seed}; {_structure_summary(first_attempt.structure)}); "
+        f"retry=(seed={final_seed}; {_structure_summary(attempt.structure)})"
+    )
+
+
+def _structure_summary(structure: Any) -> str:
+    failures = "; ".join(structure.failures) or "unknown_structure_failure"
+    return (
+        f"{failures}; "
+        f"frames={structure.frame_count}; duration={structure.duration_seconds:.3f}s; "
+        f"reached_end={structure.reached_end_token}"
+    )
+
+
+def _generation_case(asset_id: str, variant: VariantBrief) -> AudioEvaluationCase:
+    return AudioEvaluationCase(
+        case_id=asset_id,
+        track=EvaluationTrack.GENERATION,
+        dataset_id="audex-sound-lab",
+        dataset_revision="local-v1",
+        dataset_config="interactive",
+        dataset_split="session",
+        source_row_id=asset_id,
+        source_row_hash=asset_id,
+        license="user-directed-local-artifact",
+        category="interactive",
+        prompt=variant.caption,
+        caption=variant.caption,
+    )
 
 
 def _parse_variants(

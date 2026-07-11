@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import random
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -49,6 +49,37 @@ class GeneratedSound:
     wav_path: Path
     duration_seconds: float
     elapsed_seconds: float
+    seed_used: int
+
+
+@dataclass(frozen=True, slots=True)
+class SoundGenerationAttempt:
+    seed: int
+    elapsed_seconds: float
+    frame_count: int
+    duration_seconds: float
+    reached_end_token: bool
+    failures: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SoundGenerationRequest:
+    asset_id: str
+    variant: VariantBrief
+
+
+@dataclass(frozen=True, slots=True)
+class SoundGenerationOutcome:
+    asset_id: str
+    generated: GeneratedSound | None = None
+    error: str | None = None
+    attempts: tuple[SoundGenerationAttempt, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (self.generated is None) == (self.error is None):
+            raise ValueError(
+                "Sound generation outcome requires exactly one of generated or error"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +104,12 @@ class SoundVariantDesigner(Protocol):
 
 
 class SoundGenerator(Protocol):
-    def generate(
+    def generate_many(
         self,
-        variant: VariantBrief,
+        requests: tuple[SoundGenerationRequest, ...],
         *,
-        asset_id: str,
         output_dir: Path,
-    ) -> GeneratedSound: ...
+    ) -> Iterable[SoundGenerationOutcome]: ...
 
 
 class SoundLabSession:
@@ -173,29 +203,63 @@ class SoundLabSession:
         ready_count = 0
         failures: list[str] = []
         output_dir = self._asset_root / job_id
-        for asset_id, label, variant in candidates:
+        generation_requests = tuple(
+            SoundGenerationRequest(asset_id=asset_id, variant=variant)
+            for asset_id, _label, variant in candidates
+        )
+        labels_by_asset = {asset_id: label for asset_id, label, _variant in candidates}
+        pending = set(labels_by_asset)
+        for asset_id in pending:
             self._catalog.mark_candidate_generating(asset_id)
-            try:
-                generated = self._generator.generate(
-                    variant,
-                    asset_id=asset_id,
-                    output_dir=output_dir,
+        try:
+            for outcome in self._generator.generate_many(
+                generation_requests,
+                output_dir=output_dir,
+            ):
+                if outcome.asset_id not in pending:
+                    raise ValueError(
+                        "Sound generator returned an unknown or duplicate asset: "
+                        f"{outcome.asset_id}"
+                    )
+                label = labels_by_asset[outcome.asset_id]
+                self._catalog.record_candidate_attempts(
+                    outcome.asset_id,
+                    attempts=outcome.attempts,
                 )
+                if outcome.error is not None:
+                    failure = f"{label}: {outcome.error}"
+                    failures.append(failure)
+                    self._catalog.mark_candidate_failed(outcome.asset_id, failure)
+                    pending.remove(outcome.asset_id)
+                    continue
+                generated = outcome.generated
+                assert generated is not None
                 if not generated.wav_path.is_file():
                     raise FileNotFoundError(
                         f"generator did not create WAV: {generated.wav_path}"
                     )
                 self._catalog.mark_candidate_ready(
-                    asset_id,
+                    outcome.asset_id,
                     wav_path=generated.wav_path,
                     duration_seconds=generated.duration_seconds,
                     elapsed_seconds=generated.elapsed_seconds,
+                    seed_used=generated.seed_used,
                 )
+                pending.remove(outcome.asset_id)
                 ready_count += 1
-            except Exception as exc:
-                failure = f"{label}: {type(exc).__name__}: {exc}"
+        except Exception as exc:
+            batch_error = f"{type(exc).__name__}: {exc}"
+            for asset_id in pending:
+                label = labels_by_asset[asset_id]
+                failure = f"{label}: {batch_error}"
                 failures.append(failure)
                 self._catalog.mark_candidate_failed(asset_id, failure)
+            pending.clear()
+        for asset_id in pending:
+            label = labels_by_asset[asset_id]
+            failure = f"{label}: generator returned no outcome"
+            failures.append(failure)
+            self._catalog.mark_candidate_failed(asset_id, failure)
 
         self._catalog.finish_job(
             job_id,

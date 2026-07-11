@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from audex_mac.sound_lab.adapters import AudexSoundLabPlanner, AudexVariantDesigner
-from audex_mac.sound_lab.session import VariantDesignError
+from audex_mac.audio_evaluation_generation import TtaOutputInspection
+from audex_mac.audio_evaluation_runner import GenerationAttempt
+from audex_mac.sound_lab.adapters import (
+    AudexSoundLabPlanner,
+    AudexTtaSoundGenerator,
+    AudexVariantDesigner,
+)
+from audex_mac.sound_lab.session import (
+    SoundGenerationRequest,
+    VariantBrief,
+    VariantDesignError,
+)
 from audex_mac.sound_lab.tools import RenderSoundsCall
 from audex_mac.vllm_runtime import VllmRequestResult
 
@@ -202,3 +213,157 @@ def test_audex_designer_retains_first_attempt_when_repair_inference_fails() -> N
     assert error_info.value.raw_attempts == (first,)
     assert error_info.value.repair_used is True
     assert "engine stopped" in str(error_info.value)
+
+
+@pytest.mark.fast
+def test_sound_generator_salvages_clean_early_audio_and_retries_only_failures(
+    tmp_path: Path,
+) -> None:
+    early = _generation_attempt(tmp_path, failures=("incomplete_target",), frames=100)
+    tiny = _generation_attempt(tmp_path, failures=("incomplete_target",), frames=20)
+    malformed = _generation_attempt(
+        tmp_path,
+        failures=("missing_end_token", "incomplete_target"),
+        frames=50,
+        reached_end=False,
+    )
+    recovered = _generation_attempt(tmp_path, failures=(), frames=500)
+    still_bad = _generation_attempt(
+        tmp_path,
+        failures=("missing_end_token", "incomplete_target"),
+        frames=40,
+        reached_end=False,
+    )
+    adapter = FakeGenerationAdapter(((early, tiny, malformed), (recovered, still_bad)))
+
+    outcomes = tuple(
+        AudexTtaSoundGenerator(
+            runtime=object(),
+            decode_to_wav=object(),
+            adapter_factory=lambda **_kwargs: adapter,
+        ).generate_many(
+            (
+                _sound_request("asset-1", 11),
+                _sound_request("asset-2", 22),
+                _sound_request("asset-3", 33),
+            ),
+            output_dir=tmp_path,
+        )
+    )
+
+    assert [len(call) for call in adapter.calls] == [3, 2]
+    assert adapter.calls[1][0][1] != 22
+    assert adapter.calls[1][1][1] != 33
+    assert outcomes[0].generated is not None
+    assert outcomes[0].generated.duration_seconds == 2.0
+    assert outcomes[1].generated is not None
+    assert outcomes[1].generated.elapsed_seconds == 3.0
+    assert outcomes[1].generated.seed_used == adapter.calls[1][0][1]
+    assert [attempt.seed for attempt in outcomes[1].attempts] == [
+        22,
+        adapter.calls[1][0][1],
+    ]
+    assert outcomes[1].attempts[0].failures == ("incomplete_target",)
+    assert outcomes[2].error is not None
+    assert "after one retry" in outcomes[2].error
+    assert "initial=(seed=33; missing_end_token; incomplete_target" in outcomes[2].error
+    assert "retry=(seed=" in outcomes[2].error
+    assert "missing_end_token; incomplete_target; frames=40" in outcomes[2].error
+    assert "frames=40" in outcomes[2].error
+    assert "reached_end=False" in outcomes[2].error
+
+
+@pytest.mark.fast
+def test_sound_generator_preserves_first_pass_success_and_retry_failure_evidence(
+    tmp_path: Path,
+) -> None:
+    ready = _generation_attempt(tmp_path, failures=(), frames=500)
+    malformed = _generation_attempt(
+        tmp_path,
+        failures=("missing_end_token", "incomplete_target"),
+        frames=10,
+        reached_end=False,
+    )
+    adapter = ExplodingRetryAdapter((ready, malformed))
+    outcomes = AudexTtaSoundGenerator(
+        runtime=object(),
+        decode_to_wav=object(),
+        adapter_factory=lambda **_kwargs: adapter,
+    ).generate_many(
+        (_sound_request("asset-ready", 11), _sound_request("asset-retry", 22)),
+        output_dir=tmp_path,
+    )
+
+    assert next(outcomes).asset_id == "asset-ready"
+    failed = next(outcomes)
+    assert failed.asset_id == "asset-retry"
+    assert "retry batch failed" in str(failed.error)
+    assert [attempt.seed for attempt in failed.attempts] == [
+        22,
+        22 ^ 0x5A17_D3C9,
+    ]
+    assert failed.attempts[1].failures == (
+        "technical_failure: RuntimeError: retry engine failed",
+    )
+
+
+class FakeGenerationAdapter:
+    def __init__(self, batches: tuple[tuple[GenerationAttempt, ...], ...]) -> None:
+        self._batches = iter(batches)
+        self.calls: list[tuple[tuple[Any, int], ...]] = []
+
+    def generate_many(
+        self, cases: tuple[tuple[Any, int], ...]
+    ) -> tuple[GenerationAttempt, ...]:
+        self.calls.append(cases)
+        return next(self._batches)
+
+
+class ExplodingRetryAdapter:
+    def __init__(self, first_batch: tuple[GenerationAttempt, ...]) -> None:
+        self.first_batch = first_batch
+        self.call_count = 0
+
+    def generate_many(
+        self, cases: tuple[tuple[Any, int], ...]
+    ) -> tuple[GenerationAttempt, ...]:
+        del cases
+        self.call_count += 1
+        if self.call_count == 1:
+            return self.first_batch
+        raise RuntimeError("retry engine failed")
+
+
+def _sound_request(asset_id: str, seed: int) -> SoundGenerationRequest:
+    return SoundGenerationRequest(
+        asset_id=asset_id,
+        variant=VariantBrief("A bark.", "variation", seed),
+    )
+
+
+def _generation_attempt(
+    tmp_path: Path,
+    *,
+    failures: tuple[str, ...],
+    frames: int,
+    reached_end: bool = True,
+) -> GenerationAttempt:
+    path = tmp_path / f"{frames}-{'-'.join(failures) or 'valid'}.wav"
+    path.write_bytes(b"RIFF")
+    return GenerationAttempt(
+        raw_wav_path=path,
+        enhanced_wav_path=None,
+        structure=TtaOutputInspection(
+            codec_ids=(),
+            codec_token_count=frames * 4,
+            frame_count=frames,
+            duration_seconds=frames / 50,
+            reached_end_token=reached_end,
+            first_phase_mismatch=None,
+            unexpected_token_ids=(),
+            failures=failures,
+        ),
+        signal_metrics={},
+        elapsed_seconds=1.5,
+        finish_reason="stop",
+    )

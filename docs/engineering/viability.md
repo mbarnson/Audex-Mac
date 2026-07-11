@@ -663,3 +663,23 @@ CPU while the parent Python MLX decoder also used GPU, then a later CFG phase
 showed roughly 87% GPU and 43% CPU. A future profile should correlate recipe and
 model-decode versus waveform-decode phases before attributing the lower-GPU
 snapshot to host-side NumPy, scalar synchronization, or cache-copy work.
+
+## 2026-07-10 Sound Lab Text-to-Audio Evidence
+
+The first owner-run `./sound.sh` auditions produced recognizable non-speech dog
+barks through Audex CFG3 and the full XCodec1 decode path. The local catalog
+contains eight candidates across two jobs: five ready ten-second WAVs and three
+failures. All three failures were classified only as `incomplete_target`; none
+recorded an RVQ phase mismatch, unexpected token, or missing end token. The old
+harness discarded the early stream before recording its frame count, so those
+three durations cannot be recovered retroactively.
+
+Sound Lab now submits all five CFG pairs as one ten-sequence vLLM batch under an
+8K Sound-Lab-only context reservation. A clean explicit end of at least one
+second is a usable creative preview while the autonomous benchmark retains its
+strict ten-second target. Tiny or malformed candidates receive one batched
+retry. Initial and retry structure, timing, and actual seeds are persisted; a
+retry failure cannot invalidate candidates already published from the first
+pass. This revision has host-side test coverage but still needs an owner-run
+timing/listening pass to measure the new failure rate and continuous-batch
+throughput on Apple Silicon.

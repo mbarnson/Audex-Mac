@@ -141,3 +141,20 @@ def test_inspect_tta_output_reports_phase_and_truncation_failures() -> None:
     }
     assert "missing_end_token" in result.failures
     assert "incomplete_target" in result.failures
+
+
+@pytest.mark.fast
+def test_clean_early_end_is_usable_only_as_an_explicit_preview_policy() -> None:
+    tokenizer = FakeTokenizer()
+    token_ids = [
+        100 + phase * 1024 + frame % 1024 for frame in range(100) for phase in range(4)
+    ]
+    token_ids.append(11)
+
+    result = inspect_tta_output(tokenizer, token_ids, recipe=TtaRecipe())
+
+    assert result.valid is False
+    assert result.failures == ("incomplete_target",)
+    assert result.duration_seconds == 2.0
+    assert result.usable_early_preview(minimum_duration_seconds=1.0) is True
+    assert result.usable_early_preview(minimum_duration_seconds=3.0) is False

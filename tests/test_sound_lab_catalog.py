@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from audex_mac.sound_lab.catalog import SoundLabCatalog
+from audex_mac.sound_lab.session import SoundGenerationAttempt
 
 
 @pytest.mark.fast
@@ -45,11 +46,19 @@ def test_catalog_persists_blind_candidates_preferences_and_reveal(
     )
     wav_path = tmp_path / "asset-secret-1.wav"
     wav_path.write_bytes(b"RIFFfixture")
+    catalog.record_candidate_attempts(
+        "asset-secret-1",
+        attempts=(
+            SoundGenerationAttempt(101, 1.0, 20, 0.4, True, ("incomplete_target",)),
+            SoundGenerationAttempt(303, 2.5, 500, 10.0, True, ()),
+        ),
+    )
     catalog.mark_candidate_ready(
         "asset-secret-1",
         wav_path=wav_path,
         duration_seconds=10.0,
         elapsed_seconds=3.5,
+        seed_used=303,
     )
     catalog.record_preference(
         job_id="job-1",
@@ -93,7 +102,11 @@ def test_catalog_persists_blind_candidates_preferences_and_reveal(
     assert candidates[0]["seed"] == 202
     assert candidates[0]["recipe"] == "cfg3"
     assert candidates[1]["caption"] == "A close dry blast"
-    assert candidates[1]["seed"] == 101
+    assert candidates[1]["seed"] == 303
+    assert [attempt["seed"] for attempt in candidates[1]["generation_attempts"]] == [
+        101,
+        303,
+    ]
 
 
 @pytest.mark.fast
