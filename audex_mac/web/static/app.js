@@ -313,9 +313,9 @@ async function submitTurn(event) {
   };
   state.chat.messages.push(optimistic);
   renderMessages();
-  scrollToBottom();
   elements.thinkingLabel.textContent = mode.output_kind === "audio" ? "Audex is shaping sound" : "Audex is thinking";
   elements.thinking.classList.remove("hidden");
+  scrollToBottom();
   try {
     const request = { mode: state.mode };
     if (text) request.text = text;

@@ -175,6 +175,30 @@ def test_http_application_serves_the_browser_shell_and_assets(tmp_path: Path) ->
 
 
 @pytest.mark.fast
+def test_pending_model_status_is_visible_before_scrolling_to_bottom(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "unused.wav"
+    output.write_bytes(b"RIFF")
+    application = AudexWebApplication(
+        coordinator=ChatCoordinator(
+            store=WebChatStore(tmp_path / "chats"),
+            runtime_factory=RecordingFactory(output),
+        ),
+        upload_root=tmp_path / "uploads",
+    )
+    script = application.dispatch("GET", "/assets/app.js").body.decode("utf-8")
+    submit_turn = script.split("async function submitTurn", 1)[1].split(
+        "function setBusy", 1
+    )[0]
+
+    status_shown = submit_turn.index('elements.thinking.classList.remove("hidden")')
+    first_scroll = submit_turn.index("scrollToBottom()")
+
+    assert status_shown < first_scroll
+
+
+@pytest.mark.fast
 def test_http_application_returns_structured_model_errors(tmp_path: Path) -> None:
     output = tmp_path / "unused.wav"
     output.write_bytes(b"RIFF")
