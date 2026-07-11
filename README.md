@@ -8,6 +8,16 @@ Audex-Mac runs NVIDIA's Nemotron-Labs-Audex speech and sound models locally on
 Apple Silicon. Talk to your Mac, let it talk back, or ask it to manufacture a
 small rack of weird noises.
 
+## Disclaimer
+
+In case it is not abundantly clear, this repo is mostly vibe-coded with
+GPT5.5 High (and then 5.6 sol when it came out) in Codex.
+I wanted to figure out if a coding agent could take a vllm-metal checkpoint
+and support an otherwise totally-unsupported model on Mac, and the answer was
+"yes, it can, poorly". With a few tweaks and steering and a lot of prior
+knowledge playing with ASR/LLM/TTS pipelines in my past, eventually it reached
+"acceptable result."
+
 ## Why does this exist?
 
 The typical reasons to run AI locally are, like, privacy, repeatable scale,
