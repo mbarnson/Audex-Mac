@@ -17,15 +17,16 @@ directly, and Audex speaks its locally generated response.
 - One persistent vLLM Metal engine on MLX/Metal.
 - Audex audio input, text reasoning, speech-token output, and causal decoder.
 - Non-thinking instruct mode by default; thinking is explicit.
-- CFG3 speech generation by default, with explicit no-CFG speed mode.
+- Faster no-CFG speech generation by default, with explicit CFG3 quality mode.
 - Persistent readable transcripts and a 262,144-token active-context policy.
 - No silent history pruning or compaction.
 
 ## Validated Model
 
-The release-quality target is `nvidia/Nemotron-Labs-Audex-30B-A3B` on a 128 GB
-Apple Silicon Mac. The repository recognizes and can load Audex-2B, but 2B has
-received only minimal local end-to-end validation.
+The release-quality target is `nvidia/Nemotron-Labs-Audex-30B-A3B` on Apple
+Silicon. The repository recognizes and can load Audex-2B, but 2B has received
+only minimal local end-to-end validation. See the
+[runbook](../operations/runbook.md#hardware-assumptions) for memory guidance.
 
 When both models are cached, 30B is preferred. When neither is cached, startup
 offers 2B as the smaller first download and explains the NVIDIA license.
@@ -57,7 +58,7 @@ NVIDIA-provided Audex components are allowed.
 - The 30B model can carry a multi-turn spoken conversation without dropping
   committed history inside the configured 256K window.
 - Audio input and output remain Audex-native.
-- CFG3 is the visible default and no-CFG is an explicit override.
+- No-CFG is the visible default and CFG3 is an explicit quality override.
 - Patch guards, lint, and fast tests pass.
 - The README and docs state tested hardware, model scope, limitations, and
   licensing accurately.
@@ -67,7 +68,6 @@ NVIDIA-provided Audex components are allowed.
 - conversation compaction or summarization
 - million-token Mac inference in this release
 - VAD, endpointing, barge-in, or continuous microphone streaming
-- GUI, browser demo, LiveKit, or server API
-- quantization
+- GUI, LiveKit, or server API for the conversational demo
 - exact token/logit parity with NVIDIA CUDA inference
 - committing model weights, WAVs, or other generated binaries

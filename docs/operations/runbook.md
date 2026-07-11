@@ -32,16 +32,23 @@ Before pushing publicly:
 
 ## Hardware Assumptions
 
-Validated target:
+Supported target:
 
 - Apple Silicon Mac.
 - Native arm64 Python 3.12 or 3.13 for vLLM Metal.
-- 128 GB unified memory for the substantially tested full-precision 30B path.
+- 24 GB unified memory recommended for Audex-2B BF16.
+- 48 GB unified memory recommended for Audex-30B-A3B NVFP4.
+- 96 GB unified memory recommended for Audex-30B-A3B BF16.
 - Enough disk for model snapshots and transient cache files.
 
 Audex-30B-A3B is the release-quality target and is selected automatically when
 fully cached. Audex-2B remains the smaller first-download choice, but its live
 end-to-end testing is minimal.
+
+An NVFP4 conversion of the dense 2B model may eventually make a 16 GB Mac boot
+the complete path, but the initial analysis does not justify it. Preserving
+quality would leave too little headroom and likely force swap; 24 GB is the
+practical target for 2B.
 
 ## Model Download Prompt
 
