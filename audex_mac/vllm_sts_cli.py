@@ -12,7 +12,7 @@ import subprocess
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -79,6 +79,7 @@ from .vllm_speech import (
 )
 from .vllm_sts_requests import (
     VllmTtsSamplingConfig,
+    build_audio_messages_response_request,
     build_audio_response_prefix_token_ids,
     build_text_messages_history_prompt,
     build_text_messages_response_request,
@@ -129,6 +130,16 @@ class VllmSpeechToSpeechSessionStats:
     audio_component_load_seconds: float
     decoder_load_seconds: float
     turns: int
+
+
+@dataclass(frozen=True, slots=True)
+class VllmTextTurnResult:
+    """A conversational turn that deliberately stops before speech synthesis."""
+
+    transcript: str
+    response_text: str
+    input_wav_path: Path | None
+    run_log_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +271,35 @@ class VllmSpeechToSpeechSession:
             turns=self.turns,
         )
 
+    def activate_conversation(
+        self,
+        conversation: Conversation,
+        conversation_store: ConversationStore,
+    ) -> None:
+        """Select cached history by identity without reconstructing the model runtime."""
+
+        if (
+            self.conversation is not None
+            and self.conversation.conversation_id == conversation.conversation_id
+        ):
+            return
+        messages = _sanitize_prompt_history(
+            conversation.messages,
+            system_prompt=self.persona.system_prompt,
+        )
+        self.conversation = conversation
+        self.conversation_store = conversation_store
+        self.messages = messages
+        self.turns = sum(
+            1
+            for message in messages
+            if message.get("role") == "user" and message.get("content", "").strip()
+        )
+        self._audio_conversation_state_cache = None
+        self._align_conversation_context_limit()
+        if messages != conversation.messages:
+            self._persist_conversation(announce=False, invalidate_kv_cache=True)
+
     def shutdown(self, timeout: float | None = 5.0) -> None:
         for runtime in (self.async_runtime, self.runtime):
             engine = getattr(runtime, "engine", None)
@@ -273,6 +313,195 @@ class VllmSpeechToSpeechSession:
         decoder = AudexSpeechDecoderSession(**kwargs)
         decoder.device = getattr(self, "decoder_device", None)
         return decoder
+
+    def run_text_only_turn_from_text(self, *, user_text: str) -> VllmTextTurnResult:
+        """Append a typed turn while retaining the warm conversation state."""
+
+        text = user_text.strip()
+        if not text:
+            raise ValueError("Typed Audex input must not be empty.")
+        return self._complete_text_only_turn(
+            transcript=text,
+            input_wav_path=None,
+            input_mode="text",
+            asr_elapsed_seconds=None,
+        )
+
+    def run_text_only_turn_from_wav(
+        self,
+        *,
+        input_wav_path: Path,
+    ) -> VllmTextTurnResult:
+        """Transcribe speech and append a text-response turn without running TTS."""
+
+        started_at = time.time()
+        input_audio = load_wav_pcm(input_wav_path)
+        if input_audio.sample_rate != SAMPLE_RATE:
+            raise ValueError(
+                f"Audex vLLM speech input must be {SAMPLE_RATE} Hz PCM WAV, "
+                f"got {input_audio.sample_rate} Hz."
+            )
+        print(
+            "Audex STS: transcribing browser speech with vLLM Metal...",
+            flush=True,
+        )
+        asr = self._transcribe_audio(
+            input_audio.samples,
+            sample_rate=input_audio.sample_rate,
+        )
+        transcript = asr.text.strip()
+        if not transcript:
+            raise ValueError("Audex could not find speech in the input audio.")
+        print(f"Audex STS: transcript: {transcript}", flush=True)
+        return self._complete_text_only_turn(
+            transcript=transcript,
+            input_wav_path=input_wav_path,
+            input_mode="speech",
+            asr_elapsed_seconds=round(time.time() - started_at, 3),
+        )
+
+    def _complete_text_only_turn(
+        self,
+        *,
+        transcript: str,
+        input_wav_path: Path | None,
+        input_mode: str,
+        asr_elapsed_seconds: float | None,
+    ) -> VllmTextTurnResult:
+        started_at = time.time()
+        pending_messages = [
+            *self.messages,
+            {"role": "user", "content": transcript},
+        ]
+        pending_messages = self._validate_text_prompt_messages(
+            pending_messages,
+            max_tokens=self.response_max_tokens,
+        )
+        print("Audex STS: generating text response with vLLM Metal...", flush=True)
+        text = self._generate_text_response_from_messages(
+            pending_messages,
+            enable_reasoning=self.thinking_enabled,
+            max_tokens=self.response_max_tokens,
+            **self._text_conversation_state_kwargs(),
+        )
+        response_text = scrub_spoken_answer(text.text)
+        self._clear_mlx_cache()
+        print(f"Audex STS: response text: {response_text}", flush=True)
+        self.messages = [
+            *pending_messages,
+            {"role": "assistant", "content": response_text},
+        ]
+        self.turns += 1
+        self._persist_conversation()
+        if self.async_runtime is not None and self.runtime is None:
+            self._run_async(self._prime_audio_response_history_async())
+
+        elapsed_seconds = round(time.time() - started_at, 3)
+        run_log_path = self.output_dir / (f"text-turn-vllm-{time.time_ns()}.json")
+        run_log = {
+            "backend": "vllm",
+            "selected_model": self.selected_model_repo,
+            "input_mode": input_mode,
+            "output_mode": "text",
+            "input_wav_path": (
+                str(input_wav_path) if input_wav_path is not None else None
+            ),
+            "transcript": transcript,
+            "response_text": response_text,
+            "turn_index": self.turns,
+            "conversation_id": (
+                self.conversation.conversation_id
+                if self.conversation is not None
+                else None
+            ),
+            "conversation_token_count": (
+                self.conversation.token_count
+                if self.conversation is not None
+                else self._count_messages_tokens()
+            ),
+            "max_context_tokens": (
+                self.conversation.max_context_tokens
+                if self.conversation is not None
+                else None
+            ),
+            "timings": {
+                "elapsed_seconds": elapsed_seconds,
+                "asr_elapsed_seconds": asr_elapsed_seconds,
+                "text_elapsed_seconds": text.elapsed_seconds,
+            },
+            "text_context": dict(self._last_text_context_stats),
+        }
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        run_log_path.write_text(json.dumps(run_log, indent=2) + "\n", encoding="utf-8")
+        return VllmTextTurnResult(
+            transcript=transcript,
+            response_text=response_text,
+            input_wav_path=input_wav_path,
+            run_log_path=run_log_path,
+        )
+
+    def understand_audio(
+        self,
+        *,
+        input_wav_path: Path,
+        prompt: str,
+    ) -> VllmTextTurnResult:
+        """Answer a free-form question about non-speech audio outside chat state."""
+
+        normalized_prompt = " ".join(prompt.split())
+        if not normalized_prompt:
+            raise ValueError("Audio understanding requires a prompt.")
+        input_audio = load_wav_pcm(input_wav_path)
+        if input_audio.sample_rate != SAMPLE_RATE:
+            raise ValueError(
+                f"Audex audio understanding requires {SAMPLE_RATE} Hz PCM WAV, "
+                f"got {input_audio.sample_rate} Hz."
+            )
+        request = build_audio_messages_response_request(
+            self._model_tokenizer(),
+            [{"role": "system", "content": self.persona.system_prompt}],
+            input_audio.samples,
+            sample_rate=input_audio.sample_rate,
+            prompt_text=normalized_prompt,
+            enable_reasoning=self.thinking_enabled,
+            max_tokens=self.response_max_tokens,
+            trim_padded_audio_embeddings=True,
+        )
+        request = replace(request, debug_name="audio-understanding")
+        started_at = time.time()
+        if self.async_runtime is not None:
+            result = self._run_async(self.async_runtime.generate_one_final(request))
+        elif self.runtime is not None:
+            result = self.runtime.generate_one(request)
+        else:
+            raise RuntimeError("Audex vLLM runtime is not configured.")
+        response_text = result.text.strip()
+        self._clear_mlx_cache()
+        run_log_path = self.output_dir / (
+            f"audio-understanding-vllm-{time.time_ns()}.json"
+        )
+        run_log = {
+            "backend": "vllm",
+            "selected_model": self.selected_model_repo,
+            "input_mode": "audio",
+            "output_mode": "text",
+            "input_wav_path": str(input_wav_path),
+            "transcript": normalized_prompt,
+            "response_text": response_text,
+            "conversation_mutated": False,
+            "timings": {
+                "elapsed_seconds": round(time.time() - started_at, 3),
+                "generation_elapsed_seconds": result.elapsed_seconds,
+            },
+        }
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        run_log_path.write_text(json.dumps(run_log, indent=2) + "\n", encoding="utf-8")
+        return VllmTextTurnResult(
+            transcript=normalized_prompt,
+            response_text=response_text,
+            input_wav_path=input_wav_path,
+            run_log_path=run_log_path,
+        )
 
     def run_turn_from_wav(
         self,
@@ -1771,6 +2000,11 @@ class VllmSpeechToSpeechSession:
         if self._async_loop.is_closed():
             raise RuntimeError("Audex async vLLM event loop is already closed.")
         return self._async_loop.run_until_complete(coroutine)
+
+    def run_model_awaitable(self, awaitable: Any) -> Any:
+        """Run Sound Lab work on the same loop that owns the shared vLLM engine."""
+
+        return self._run_async(awaitable)
 
     def _close_async_loop(self) -> None:
         if self._async_loop is None or self._async_loop.is_closed():

@@ -158,3 +158,53 @@ def test_submit_rejects_payloads_that_do_not_match_the_selected_mode(
             mode=ChatMode.SPEECH_TEXT,
             text="not an audio recording",
         )
+
+
+@pytest.mark.fast
+def test_generated_sound_assets_receive_chat_scoped_playback_urls(
+    tmp_path: Path,
+) -> None:
+    sound = tmp_path / "rain.wav"
+    sound.write_bytes(b"RIFF generated sound")
+
+    class AssetRuntime(FakeConversationRuntime):
+        def respond(self, **_kwargs) -> RuntimeTurn:
+            return RuntimeTurn(
+                transcript="Generate rain",
+                response_text="One sound is ready.",
+                assets=(
+                    {
+                        "label": "Rain",
+                        "caption": "Rain falls on leaves.",
+                        "audio_path": str(sound),
+                    },
+                ),
+            )
+
+    class AssetFactory:
+        def create(self, chat_id: str) -> AssetRuntime:
+            return AssetRuntime(chat_id)
+
+    coordinator = ChatCoordinator(
+        store=WebChatStore(tmp_path / "chats"),
+        runtime_factory=AssetFactory(),
+    )
+    chat = coordinator.create_chat()
+
+    turn = coordinator.submit(
+        chat.chat_id,
+        mode=ChatMode.TEXT_AUDIO,
+        text="Generate rain",
+    )
+
+    asset = turn.assistant.assets[0]
+    assert asset["caption"] == "Rain falls on leaves."
+    assert asset["audio_url"].endswith(f"/{turn.assistant.message_id}/assets/0")
+    assert (
+        coordinator.media_path(
+            chat.chat_id,
+            turn.assistant.message_id,
+            asset_index=0,
+        )
+        == sound
+    )

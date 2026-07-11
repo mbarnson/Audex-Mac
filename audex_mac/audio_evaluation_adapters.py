@@ -32,8 +32,14 @@ _EVAL_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
 class AudexVllmUnderstandingAdapter:
     """Answer one non-speech audio-understanding case using an Audex vLLM runtime."""
 
-    def __init__(self, *, runtime: Any) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        run_sync: Callable[[Any], Any] | None = None,
+    ) -> None:
         self._runtime = runtime
+        self._run_sync = run_sync or _run_async
 
     def answer(
         self,
@@ -67,7 +73,7 @@ class AudexVllmUnderstandingAdapter:
                 seed=seed,
             ),
         )
-        result = _run_async(self._runtime.generate_one_final(request))
+        result = self._run_sync(self._runtime.generate_one_final(request))
         return UnderstandingAttempt(
             raw_answer=result.text.strip(),
             elapsed_seconds=result.elapsed_seconds,
@@ -88,6 +94,7 @@ class AudexVllmTtaGenerationAdapter:
         enhance_wav: Callable[[Path, Path, AudioEvaluationCase], None] | None = None,
         allow_early_preview_seconds: float | None = None,
         allow_nvidia_reference_output: bool = False,
+        run_sync: Callable[[Any], Any] | None = None,
     ) -> None:
         self._runtime = runtime
         self._raw_dir = raw_dir
@@ -96,6 +103,7 @@ class AudexVllmTtaGenerationAdapter:
         self._enhance_wav = enhance_wav
         self._allow_early_preview_seconds = allow_early_preview_seconds
         self._allow_nvidia_reference_output = allow_nvidia_reference_output
+        self._run_sync = run_sync or _run_async
 
     def generate(
         self,
@@ -124,7 +132,7 @@ class AudexVllmTtaGenerationAdapter:
                     seed=seed,
                 )
             )
-        results = _run_async(self._runtime.generate_many_final(tuple(requests)))
+        results = self._run_sync(self._runtime.generate_many_final(tuple(requests)))
         attempts: list[GenerationAttempt] = []
         for index, (case, _seed) in enumerate(cases):
             attempts.append(self._decode_attempt(case, results[index * 2]))

@@ -8,6 +8,7 @@ import json
 import mimetypes
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,7 @@ MAX_REQUEST_BYTES = 64 * 1024 * 1024
 _CHAT_ROUTE = re.compile(r"^/api/chats/([^/]+)$")
 _TURN_ROUTE = re.compile(r"^/api/chats/([^/]+)/turns$")
 _MEDIA_ROUTE = re.compile(r"^/api/chats/([^/]+)/media/([^/]+)$")
+_ASSET_MEDIA_ROUTE = re.compile(r"^/api/chats/([^/]+)/media/([^/]+)/assets/(\d+)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,20 +108,19 @@ class AudexWebApplication:
             )
             return _json_response(201, turn.to_dict())
 
+        match = _ASSET_MEDIA_ROUTE.fullmatch(path)
+        if match and method == "GET":
+            media_path = self.coordinator.media_path(
+                match.group(1),
+                match.group(2),
+                asset_index=int(match.group(3)),
+            )
+            return _media_response(media_path)
+
         match = _MEDIA_ROUTE.fullmatch(path)
         if match and method == "GET":
             media_path = self.coordinator.media_path(match.group(1), match.group(2))
-            return HttpResponse(
-                200,
-                media_path.read_bytes(),
-                (
-                    "audio/wav"
-                    if media_path.suffix.casefold() == ".wav"
-                    else mimetypes.guess_type(media_path.name)[0]
-                    or "application/octet-stream"
-                ),
-                {"Cache-Control": "private, max-age=3600"},
-            )
+            return _media_response(media_path)
 
         if method == "GET" and path in {"/", "/index.html"}:
             return _static_response("index.html")
@@ -156,6 +157,7 @@ def serve(
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
+    on_ready: Callable[[str], None] | None = None,
 ) -> None:
     """Serve Audex until interrupted."""
 
@@ -196,7 +198,10 @@ def serve(
             print(f"Audex web: {format % args}", flush=True)
 
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Audex browser interface: http://{host}:{server.server_port}", flush=True)
+    url = f"http://{host}:{server.server_port}"
+    print(f"Audex browser interface: {url}", flush=True)
+    if on_ready is not None:
+        on_ready(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -243,4 +248,17 @@ def _static_response(name: str) -> HttpResponse:
         path.read_bytes(),
         mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         {"Cache-Control": "no-cache"},
+    )
+
+
+def _media_response(path: Path) -> HttpResponse:
+    return HttpResponse(
+        200,
+        path.read_bytes(),
+        (
+            "audio/wav"
+            if path.suffix.casefold() == ".wav"
+            else mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        ),
+        {"Cache-Control": "private, max-age=3600"},
     )

@@ -226,7 +226,7 @@ for arg in "$@"; do
       ARGS+=("${arg}")
       ARGS_COUNT=$((ARGS_COUNT + 1))
       ;;
-    sound-lab)
+    sound-lab|web)
       NEEDS_AUDIO_EVAL_DEPS=1
       ARGS+=("${arg}")
       ARGS_COUNT=$((ARGS_COUNT + 1))

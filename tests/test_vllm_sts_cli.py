@@ -85,6 +85,46 @@ def test_audio_conversation_state_reuses_primed_prefix_metadata(
     assert tokenizations == 2
 
 
+def test_vllm_session_switches_conversation_keys_without_reloading_runtime(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime()
+    session = make_session(tmp_path, runtime)
+    store = SimpleNamespace(save=lambda _conversation: None)
+    first = SimpleNamespace(
+        conversation_id="chat-one",
+        messages=[
+            {"role": "system", "content": "System."},
+            {"role": "user", "content": "First topic"},
+        ],
+        max_context_tokens=262_144,
+        token_count=10,
+    )
+    second = SimpleNamespace(
+        conversation_id="chat-two",
+        messages=[
+            {"role": "system", "content": "System."},
+            {"role": "user", "content": "Second topic"},
+            {"role": "assistant", "content": "Second answer"},
+        ],
+        max_context_tokens=262_144,
+        token_count=20,
+    )
+
+    session.activate_conversation(first, store)
+    session.activate_conversation(second, store)
+    session.activate_conversation(first, store)
+
+    assert session.runtime is runtime
+    assert session.conversation is first
+    assert session.messages[-1]["content"] == "First topic"
+    assert session.turns == 1
+    assert session._text_conversation_state_kwargs()["conversation_state_key"] == (
+        "chat-one"
+    )
+    session.shutdown()
+
+
 def test_no_cfg_model_audio_is_eligible_for_semantic_latency_gate() -> None:
     speech = SimpleNamespace(
         first_audio_ready_at=100.5,
@@ -959,6 +999,76 @@ def test_vllm_sts_session_runs_asr_text_tts_decoder_pipeline(
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "Hi back."},
     ]
+
+
+def test_vllm_text_only_turns_share_history_without_running_tts(tmp_path: Path) -> None:
+    input_wav = tmp_path / "input.wav"
+    write_pcm16_wav(input_wav, [0.0, 0.25, -0.25], sample_rate=16_000)
+    runtime = FakeRuntime()
+    session = make_session(tmp_path, runtime)
+
+    typed = session.run_text_only_turn_from_text(user_text="Typed first.")
+    spoken = session.run_text_only_turn_from_wav(input_wav_path=input_wav)
+
+    assert typed.transcript == "Typed first."
+    assert typed.response_text == "Hi back."
+    assert typed.input_wav_path is None
+    assert spoken.transcript == "hello"
+    assert spoken.response_text == "Hi back."
+    assert spoken.input_wav_path == input_wav
+    assert [call[0] for call in runtime.calls] == ["text", "asr", "text"]
+    assert [message["role"] for message in session.messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    second_prompt = runtime.calls[2][1][0]
+    assert second_prompt[1:4] == [
+        {"role": "user", "content": "Typed first."},
+        {"role": "assistant", "content": "Hi back."},
+        {"role": "user", "content": "hello"},
+    ]
+    assert json.loads(typed.run_log_path.read_text())["output_mode"] == "text"
+    assert json.loads(spoken.run_log_path.read_text())["input_mode"] == "speech"
+    session.shutdown()
+
+
+def test_vllm_audio_understanding_answers_prompt_without_mutating_chat_history(
+    tmp_path: Path,
+) -> None:
+    class UnderstandingRuntime(FakeAsyncRuntime):
+        async def generate_one_final(self, request):
+            self.calls.append(("understanding", request))
+            return VllmRequestResult(
+                text="A distant train horn echoes through rain.",
+                token_ids=(7, 8),
+                elapsed_seconds=0.4,
+                finish_reason="stop",
+                request_debug_name="audio-understanding",
+            )
+
+    input_wav = tmp_path / "ambience.wav"
+    write_pcm16_wav(input_wav, [0.0, 0.25, -0.25], sample_rate=16_000)
+    runtime = UnderstandingRuntime()
+    session = make_session(tmp_path, runtime=None, async_runtime=runtime)
+    original_messages = list(session.messages)
+
+    result = session.understand_audio(
+        input_wav_path=input_wav,
+        prompt="What is happening in this recording?",
+    )
+
+    assert result.transcript == "What is happening in this recording?"
+    assert result.response_text == "A distant train horn echoes through rain."
+    assert result.input_wav_path == input_wav
+    assert session.messages == original_messages
+    assert runtime.calls[0][0] == "understanding"
+    request = runtime.calls[0][1]
+    assert request.debug_name == "audio-understanding"
+    assert request.prompt["multi_modal_data"]["audio"]
+    session.shutdown()
 
 
 def test_vllm_sts_session_scrubs_prompt_leakage_before_static_tts(

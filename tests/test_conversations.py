@@ -43,6 +43,29 @@ def test_conversation_store_creates_text_and_json_logs(tmp_path: Path) -> None:
     assert "## Assistant\n\nHi there." in transcript
 
 
+def test_conversation_store_can_use_browser_chat_id_as_cache_identity(
+    tmp_path: Path,
+) -> None:
+    store = ConversationStore(tmp_path / "conversations")
+
+    conversation = store.create(
+        conversation_id="chat-browser-123",
+        persona_id="assistant",
+        persona_path=tmp_path / "assistant.md",
+        system_prompt="System",
+    )
+
+    assert conversation.conversation_id == "chat-browser-123"
+    assert store.load("chat-browser-123").conversation_id == "chat-browser-123"
+    with pytest.raises(ValueError, match="Invalid conversation id"):
+        store.create(
+            conversation_id="../escape",
+            persona_id="assistant",
+            persona_path=tmp_path / "assistant.md",
+            system_prompt="System",
+        )
+
+
 def test_conversation_store_resumes_current_by_default(tmp_path: Path) -> None:
     store = ConversationStore(tmp_path)
     created = store.create(

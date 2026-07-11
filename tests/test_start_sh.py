@@ -75,6 +75,7 @@ def test_start_sh_installs_audex_deps_into_vllm_metal_runtime() -> None:
     assert 'install_target="${ROOT_DIR}"' in script
     assert '"${python_bin}" -m pip install -e "${install_target}"' in script
     assert "ensure_vllm_metal_audex_deps" in script
+    assert "sound-lab|web)" in script
 
 
 def test_start_sh_reinstalls_audex_deps_after_runtime_rebuild(tmp_path: Path) -> None:

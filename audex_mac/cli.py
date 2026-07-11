@@ -89,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         from .sound_lab.cli import main as run_sound_lab_cli
 
         return run_sound_lab_cli(raw_argv[1:])
+    if raw_argv[:1] == ["web"]:
+        from .web.cli import main as run_web_cli
+
+        return run_web_cli(raw_argv[1:])
     if raw_argv[:1] == ["tta-quant-quality"]:
         from .tta_quality_cli import main as run_tta_quality_cli
 

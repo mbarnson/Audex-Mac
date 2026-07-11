@@ -263,7 +263,7 @@ class SoundLabCatalog:
             raise FileNotFoundError(f"Sound Lab WAV is missing: {path}")
         return path
 
-    def public_snapshot(self) -> dict[str, Any]:
+    def public_snapshot(self, *, reveal_all: bool = False) -> dict[str, Any]:
         with self._connect() as connection:
             connection.row_factory = sqlite3.Row
             jobs = connection.execute(
@@ -280,7 +280,10 @@ class SoundLabCatalog:
                     (job["job_id"],),
                 ).fetchall()
                 public_candidates = [
-                    self._public_candidate(candidate, revealed=bool(job["revealed"]))
+                    self._public_candidate(
+                        candidate,
+                        revealed=bool(job["revealed"]) or reveal_all,
+                    )
                     for candidate in candidates
                 ]
                 preference = connection.execute(

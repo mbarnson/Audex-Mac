@@ -247,18 +247,22 @@ function soundCard(asset, index) {
 
 function updateComposer() {
   const mode = currentMode();
-  const textInput = mode.input_kind === "text";
-  elements.input.classList.toggle("hidden", !textInput);
-  elements.record.classList.toggle("hidden", textInput);
+  const showText = mode.input_kind !== "speech";
+  elements.input.classList.toggle("hidden", !showText);
+  elements.record.classList.toggle("hidden", mode.input_kind === "text");
   elements.file.parentElement.classList.toggle("hidden", mode.input_kind !== "audio");
-  elements.input.placeholder = mode.output_kind === "audio"
-    ? "Describe the sound you want to create…"
-    : "Message Audex…";
-  elements.hint.textContent = textInput
+  elements.input.placeholder = mode.input_kind === "audio"
+    ? mode.output_kind === "text"
+      ? "Ask about this audio (optional)…"
+      : "Add generation direction (optional)…"
+    : mode.output_kind === "audio"
+      ? "Describe the sound you want to create…"
+      : "Message Audex…";
+  elements.hint.textContent = mode.input_kind === "text"
     ? "Enter to send · Shift Enter for a new line"
     : mode.input_kind === "speech"
       ? "Tap the microphone, speak, then tap again to send"
-      : "Choose a file or record an audio prompt";
+      : "Choose a file or record audio; the written prompt is optional";
   updateSendState();
 }
 
@@ -296,8 +300,10 @@ async function submitTurn(event) {
   elements.thinking.classList.remove("hidden");
   try {
     const request = { mode: state.mode };
-    if (mode.input_kind === "text") request.text = text;
-    else request.audio = { name: state.audio.name, base64: await blobToBase64(state.audio.blob) };
+    if (text) request.text = text;
+    if (mode.input_kind !== "text") {
+      request.audio = { name: state.audio.name, base64: await blobToBase64(state.audio.blob) };
+    }
     const payload = await api(`/api/chats/${state.chat.id}/turns`, {
       method: "POST",
       body: JSON.stringify(request),

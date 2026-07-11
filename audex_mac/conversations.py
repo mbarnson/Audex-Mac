@@ -48,15 +48,20 @@ class ConversationStore:
     def create(
         self,
         *,
+        conversation_id: str | None = None,
         persona_id: str,
         persona_path: Path,
         system_prompt: str,
         max_context_tokens: int = DEFAULT_DEMO_CONTEXT_TOKENS,
     ) -> Conversation:
+        if conversation_id is not None and not CONVERSATION_ID_PATTERN.fullmatch(
+            conversation_id
+        ):
+            raise ValueError(f"Invalid conversation id: {conversation_id}")
         now = _utc_timestamp()
         conversation = Conversation(
             root=self.root,
-            conversation_id=_new_conversation_id(),
+            conversation_id=conversation_id or _new_conversation_id(),
             created_at=now,
             updated_at=now,
             persona_id=persona_id,

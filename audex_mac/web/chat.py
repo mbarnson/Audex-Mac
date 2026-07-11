@@ -73,7 +73,7 @@ class ChatCoordinator:
         text: str | None = None,
         audio_path: Path | None = None,
     ) -> ChatTurn:
-        normalized = " ".join(text.split()) if text is not None else None
+        normalized = text.strip() if text is not None else None
         if mode.input_kind == "text" and not normalized:
             raise ValueError(f"{mode.spec.label} requires text input")
         if mode.input_kind != "text" and audio_path is None:
@@ -96,6 +96,15 @@ class ChatCoordinator:
             now = _now()
             user_id = uuid.uuid4().hex
             assistant_id = uuid.uuid4().hex
+            assets = []
+            for index, raw_asset in enumerate(result.assets):
+                asset = dict(raw_asset)
+                if asset.get("audio_path"):
+                    asset["audio_path"] = str(asset["audio_path"])
+                    asset["audio_url"] = (
+                        f"/api/chats/{chat_id}/media/{assistant_id}/assets/{index}"
+                    )
+                assets.append(asset)
             user = WebMessage(
                 message_id=user_id,
                 role="user",
@@ -127,18 +136,31 @@ class ChatCoordinator:
                     else None
                 ),
                 kind="sound-result" if mode.output_kind == "audio" else "message",
-                assets=[dict(asset) for asset in result.assets],
+                assets=assets,
             )
             chat.current_mode = mode
             chat.messages.extend((user, assistant))
             self.store.save(chat)
             return ChatTurn(chat=chat, user=user, assistant=assistant)
 
-    def media_path(self, chat_id: str, message_id: str) -> Path:
+    def media_path(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        asset_index: int | None = None,
+    ) -> Path:
         chat = self.store.load(chat_id)
         for message in chat.messages:
-            if message.message_id == message_id and message.audio_path:
-                path = Path(message.audio_path)
+            if message.message_id != message_id:
+                continue
+            raw_path = message.audio_path
+            if asset_index is not None:
+                if not 0 <= asset_index < len(message.assets):
+                    raise KeyError(f"unknown Audex sound asset: {asset_index}")
+                raw_path = message.assets[asset_index].get("audio_path")
+            if raw_path:
+                path = Path(str(raw_path))
                 if path.is_file():
                     return path
                 raise FileNotFoundError(f"Audex media is missing: {path}")

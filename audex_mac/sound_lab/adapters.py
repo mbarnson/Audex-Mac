@@ -98,8 +98,14 @@ nonempty caption and difference. Do not use Markdown or add commentary."""
 class AudexSoundLabPlanner:
     """Turn one user utterance into a validated Sound Lab tool call or reply."""
 
-    def __init__(self, *, runtime: Any) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        run_sync: Callable[[Any], Any] = run_sync_model_call,
+    ) -> None:
         self._runtime = runtime
+        self._run_sync = run_sync
 
     def plan(self, user_text: str) -> RenderSoundsCall | str:
         messages = [
@@ -121,7 +127,7 @@ class AudexSoundLabPlanner:
             enable_thinking=False,
         )
         request = replace(base_request, prompt=prompt, debug_name="sound-lab-tool")
-        result = run_sync_model_call(self._runtime.generate_one_final(request))
+        result = self._run_sync(self._runtime.generate_one_final(request))
         raw = result.text.strip()
         if "<tool_call>" in raw:
             return parse_sound_lab_tool_call(raw)
@@ -134,8 +140,14 @@ class AudexSoundLabPlanner:
 class AudexVariantDesigner:
     """Expand a render tool call into strict, distinct generation captions."""
 
-    def __init__(self, *, runtime: Any) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        run_sync: Callable[[Any], Any] = run_sync_model_call,
+    ) -> None:
         self._runtime = runtime
+        self._run_sync = run_sync
 
     def design(
         self,
@@ -214,7 +226,7 @@ class AudexVariantDesigner:
             max_tokens=_DESIGNER_MAX_TOKENS,
         )
         request = replace(request, debug_name=debug_name)
-        result = run_sync_model_call(self._runtime.generate_one_final(request))
+        result = self._run_sync(self._runtime.generate_one_final(request))
         return result.text
 
 
@@ -230,11 +242,13 @@ class AudexTtaSoundGenerator:
         adapter_factory: Callable[..., AudexVllmTtaGenerationAdapter] = (
             AudexVllmTtaGenerationAdapter
         ),
+        run_sync: Callable[[Any], Any] = run_sync_model_call,
     ) -> None:
         self._runtime = runtime
         self._decode_to_wav = decode_to_wav
         self._enhance_wav = enhance_wav
         self._adapter_factory = adapter_factory
+        self._run_sync = run_sync
 
     def generate_many(
         self,
@@ -268,6 +282,7 @@ class AudexTtaSoundGenerator:
             decode_to_wav=self._decode_to_wav,
             enhance_wav=self._enhance_wav,
             allow_nvidia_reference_output=True,
+            run_sync=self._run_sync,
         )
         attempts = adapter.generate_many(cases)
         retry_indexes: list[int] = []

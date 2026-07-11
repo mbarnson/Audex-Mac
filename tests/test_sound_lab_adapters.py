@@ -78,10 +78,20 @@ def test_audex_planner_uses_tool_template_and_designer_requires_distinct_json() 
 ]}""",
         )
     )
-    planner = AudexSoundLabPlanner(runtime=runtime)
+    runner_calls: list[object] = []
+
+    def runner(awaitable):
+        from audex_mac.audio_evaluation_adapters import run_sync_model_call
+
+        runner_calls.append(awaitable)
+        return run_sync_model_call(awaitable)
+
+    planner = AudexSoundLabPlanner(runtime=runtime, run_sync=runner)
 
     call = planner.plan("Make two thunderclaps.")
-    design = AudexVariantDesigner(runtime=runtime).design(call, job_id="job-1")
+    design = AudexVariantDesigner(runtime=runtime, run_sync=runner).design(
+        call, job_id="job-1"
+    )
 
     assert isinstance(call, RenderSoundsCall)
     assert call.count == 2
@@ -92,6 +102,7 @@ def test_audex_planner_uses_tool_template_and_designer_requires_distinct_json() 
         "sound-lab-tool",
         "sound-lab-design",
     ]
+    assert len(runner_calls) == 2
 
 
 @pytest.mark.fast

@@ -84,6 +84,11 @@ def test_catalog_persists_blind_candidates_preferences_and_reveal(
         "designer_repair_used": True,
         "failure": None,
     }
+    unblinded = SoundLabCatalog(database).public_snapshot(reveal_all=True)
+    unblinded_candidates = unblinded["jobs"][0]["candidates"]
+    assert unblinded_candidates[0]["caption"] == "A distant canyon blast"
+    assert unblinded_candidates[1]["caption"] == "A close dry blast"
+    assert unblinded["jobs"][0]["revealed"] is False
 
     with pytest.raises(ValueError, match="preference"):
         other_catalog = SoundLabCatalog(tmp_path / "other.sqlite3")
