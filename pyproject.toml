@@ -28,9 +28,11 @@ oracle = [
 ]
 dev = [
   "black>=25.0.0",
+  "numpy>=1.26",
   "pytest>=9.0.0",
   "pytest-bdd>=8.0.0",
   "ruff>=0.14.0",
+  "scipy>=1.13",
   "soundfile>=0.12",
 ]
 
