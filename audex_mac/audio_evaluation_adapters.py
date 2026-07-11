@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import wave
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -86,13 +85,17 @@ class AudexVllmTtaGenerationAdapter:
         raw_dir: Path,
         enhanced_dir: Path | None = None,
         decode_to_wav: Callable[[TtaOutputInspection, Path, AudioEvaluationCase], None],
+        enhance_wav: Callable[[Path, Path, AudioEvaluationCase], None] | None = None,
         allow_early_preview_seconds: float | None = None,
+        allow_nvidia_reference_output: bool = False,
     ) -> None:
         self._runtime = runtime
         self._raw_dir = raw_dir
         self._enhanced_dir = enhanced_dir or (raw_dir.parent / "enhanced")
         self._decode_to_wav = decode_to_wav
+        self._enhance_wav = enhance_wav
         self._allow_early_preview_seconds = allow_early_preview_seconds
+        self._allow_nvidia_reference_output = allow_nvidia_reference_output
 
     def generate(
         self,
@@ -143,10 +146,16 @@ class AudexVllmTtaGenerationAdapter:
                 minimum_duration_seconds=self._allow_early_preview_seconds
             )
         )
+        should_decode = should_decode or (
+            self._allow_nvidia_reference_output
+            and inspection.nvidia_reference_decodable
+        )
         if should_decode:
             self._decode_to_wav(inspection, raw_wav_path, case)
-            enhanced_wav_path = self._enhanced_dir / f"{case.case_id}.wav"
-            _write_48k_stereo_reference_wav(raw_wav_path, enhanced_wav_path)
+            if self._enhance_wav is not None:
+                enhanced_wav_path = self._enhanced_dir / f"{case.case_id}.wav"
+                enhanced_wav_path.parent.mkdir(parents=True, exist_ok=True)
+                self._enhance_wav(raw_wav_path, enhanced_wav_path, case)
         else:
             raw_wav_path.write_bytes(b"")
         return GenerationAttempt(
@@ -214,29 +223,6 @@ def _signal_metrics(path: Path) -> Mapping[str, Any]:
         }
     )
     return metrics
-
-
-def _write_48k_stereo_reference_wav(raw_wav_path: Path, destination: Path) -> None:
-    """Write a deterministic 48 kHz stereo metric-view WAV from raw 16 kHz mono."""
-
-    loaded = load_wav_pcm(raw_wav_path)
-    if loaded.sample_rate != 16_000:
-        raise ValueError(f"raw TTA WAV must be 16000 Hz: {raw_wav_path}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    frames = bytearray()
-    for sample in loaded.samples:
-        clamped = max(-1.0, min(1.0, float(sample)))
-        value = int(round(clamped * 32767.0))
-        value = max(-32768, min(32767, value))
-        encoded = value.to_bytes(2, "little", signed=True)
-        for _upsample in range(3):
-            frames.extend(encoded)
-            frames.extend(encoded)
-    with wave.open(str(destination), "wb") as wav:
-        wav.setnchannels(2)
-        wav.setsampwidth(2)
-        wav.setframerate(48_000)
-        wav.writeframes(bytes(frames))
 
 
 def _run_async(awaitable: Any) -> Any:

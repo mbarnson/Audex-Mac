@@ -10,6 +10,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
+from ..audio_evaluation_enhancement import (
+    NvidiaEnhancementVae,
+    enhancement_vae_artifact_identity,
+    resolve_enhancement_vae_config,
+)
 from ..audio_evaluation_xcodec import (
     XCODEC1_REPO_ID,
     XCODEC1_REVISION,
@@ -22,8 +27,9 @@ from ..audio_model_resolver import (
     load_audio_vllm_runtime,
     resolve_cached_audio_model,
 )
+from ..models import AUDEX_2B_REPO, AUDEX_30B_REPO
+from ..tta_quality import configure_nvidia_tta_environment
 from .adapters import (
-    MINIMUM_EARLY_PREVIEW_SECONDS,
     AudexSoundLabPlanner,
     AudexTtaSoundGenerator,
     AudexVariantDesigner,
@@ -40,9 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Audex Sound Lab: conversational non-speech audio exploration"
     )
     parser.add_argument("--model", choices=("30b", "2b"), default="30b")
-    parser.add_argument("--profile", choices=("bf16", "nvfp4"), default="nvfp4")
+    parser.add_argument("--profile", choices=("bf16", "nvfp4"), default="bf16")
     parser.add_argument("--model-path", type=Path, default=None)
     parser.add_argument("--xcodec1-path", type=Path, default=None)
+    parser.add_argument("--enhancement-vae-path", type=Path, default=None)
     parser.add_argument(
         "--xcodec-device",
         choices=("auto", "mps", "cpu", "cuda"),
@@ -56,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--profile nvfp4 is only defined for --model 30b")
     if not 0 <= args.board_port <= 65535:
         parser.error("--board-port must be between 0 and 65535")
+    configure_nvidia_tta_environment(os.environ)
 
     model_repo = audio_model_repo(args.model, args.profile)
     model_path = args.model_path
@@ -70,12 +78,19 @@ def main(argv: list[str] | None = None) -> int:
         args.xcodec1_path,
         device=args.xcodec_device,
     )
+    enhancement_config = _resolve_or_download_enhancement_vae(
+        args.enhancement_vae_path,
+        model=args.model,
+        device=args.xcodec_device,
+    )
     print(f"Audex Sound Lab: loading {model_repo}...", flush=True)
     runtime = load_audio_vllm_runtime(model_path, args.profile)
     decoder = XCodec1WavDecoder(
         xcodec_config,
-        allow_early_preview_seconds=MINIMUM_EARLY_PREVIEW_SECONDS,
+        allow_nvidia_reference_output=True,
+        target_seconds=10.0,
     )
+    enhancer = NvidiaEnhancementVae(enhancement_config)
     root = DEFAULT_SOUND_LAB_ROOT.resolve()
     catalog = SoundLabCatalog(root / "catalog.sqlite3")
     board = SoundLabBoard(
@@ -88,12 +103,17 @@ def main(argv: list[str] | None = None) -> int:
         catalog=catalog,
         planner=AudexSoundLabPlanner(runtime=runtime),
         designer=AudexVariantDesigner(runtime=runtime),
-        generator=AudexTtaSoundGenerator(runtime=runtime, decode_to_wav=decoder),
+        generator=AudexTtaSoundGenerator(
+            runtime=runtime,
+            decode_to_wav=decoder,
+            enhance_wav=enhancer,
+        ),
         asset_root=root / "assets",
         model_repo=model_repo,
         recipe=(
             "nvidia-tta-cfg3+xcodec1@"
-            f"{xcodec1_artifact_identity(xcodec_config.path)}"
+            f"{xcodec1_artifact_identity(xcodec_config.path)}+enhancement-vae@"
+            f"{enhancement_vae_artifact_identity(enhancement_config.root)}"
         ),
     )
     with board:
@@ -158,3 +178,32 @@ def _resolve_or_download_xcodec1(
         token=os.environ.get("HF_TOKEN"),
     )
     return resolve_xcodec1_config(path, device=device)
+
+
+def _resolve_or_download_enhancement_vae(
+    explicit_path: Path | None,
+    *,
+    model: str,
+    device: str,
+) -> Any:
+    if explicit_path is not None:
+        return resolve_enhancement_vae_config(explicit_path, device=device, seed=0)
+    from huggingface_hub import snapshot_download
+
+    repo_id = AUDEX_2B_REPO if model == "2b" else AUDEX_30B_REPO
+    print(
+        f"Audex Sound Lab: resolving NVIDIA enhancement VAE from {repo_id}...",
+        flush=True,
+    )
+    snapshot = Path(
+        snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=("enhancement_VAE/*",),
+            token=os.environ.get("HF_TOKEN"),
+        )
+    )
+    return resolve_enhancement_vae_config(
+        snapshot / "enhancement_VAE",
+        device=device,
+        seed=0,
+    )

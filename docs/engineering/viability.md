@@ -674,11 +674,12 @@ recorded an RVQ phase mismatch, unexpected token, or missing end token. The old
 harness discarded the early stream before recording its frame count, so those
 three durations cannot be recovered retroactively.
 
-Sound Lab now submits all five CFG pairs as one ten-sequence vLLM batch under an
-8K Sound-Lab-only context reservation. A clean explicit end of at least one
-second is a usable creative preview while the autonomous benchmark retains its
-strict ten-second target. Tiny or malformed candidates receive one batched
-retry. Initial and retry structure, timing, and actual seeds are persisted; a
+Sound Lab now submits at most two CFG pairs per wave under an 8K
+Sound-Lab-only context reservation, matching NVIDIA's documented generation
+command. NVIDIA's script decodes any nonempty phase-valid stream and pads/trims
+the waveform to ten seconds; Sound Lab now does the same. Phase-invalid streams
+receive one bounded retry. Initial and retry
+structure, timing, and actual seeds are persisted; a
 retry failure cannot invalidate candidates already published from the first
 pass. This revision has host-side test coverage but still needs an owner-run
 timing/listening pass to measure the new failure rate and continuous-batch
@@ -691,3 +692,21 @@ had not enabled the separate vLLM CFG engine-wiring switch, so the 8K CFG contex
 override was never applied. Sound Lab now exports
 `AUDEX_VLLM_ENABLE_CFG_WIRING=1` alongside its recipe, context, and capacity
 settings. The memory guard was correct and remains unchanged.
+
+The initial board implementation mislabeled a deterministic 16-to-48 kHz sample
+rate/channel conversion as an enhanced WAV. NVIDIA's reported TTA benchmark
+instead uses its released 2.62 GB FP32 enhancement VAE after XCodec1 decoding.
+Sound Lab now loads that checkpoint lazily on MPS, resets NVIDIA's default VAE
+seed `0` for each clip, preserves raw 16 kHz WAVs, and serves the learned 48 kHz
+mono reconstruction. A local MPS smoke test successfully enhanced an existing
+ten-second raw Sound Lab WAV.
+
+The first controlled BF16-versus-NVFP4 TTA listening corpus completed on
+2026-07-10. It rendered eight identical literal captions and seeds per profile,
+in two-pair CFG3 waves, through the same XCodec1 and stochastic enhancement VAE
+seed `0`. Both manifests completed all eight cases; all 16 public listening WAVs
+are mono 48 kHz and exactly ten seconds. BF16 generation-result elapsed values
+sum to 812.457 seconds versus 638.601 seconds for NVFP4 (per-request values
+overlap within each wave and are not wall time). The blind set is local under
+`.audex/listening/tta-quant-20260710-223620`; WAVs and its private decoding key
+remain excluded from Git.

@@ -42,6 +42,10 @@ from .audio_evaluation_clap import (
     write_clap_worker_request,
 )
 from .audio_evaluation_datasets import MaterializedAudio
+from .audio_evaluation_enhancement import (
+    EnhancementVaeConfig,
+    NvidiaEnhancementVae,
+)
 from .audio_evaluation_generation import TtaRecipe
 from .audio_evaluation_hf import (
     DatasetPin,
@@ -115,6 +119,10 @@ def main(
     decoder_factory: (
         Callable[[XCodec1Config | None], Callable[[Any, Path, Any], None]] | None
     ) = None,
+    enhancer_factory: (
+        Callable[[EnhancementVaeConfig | None], Callable[[Path, Path, Any], None]]
+        | None
+    ) = None,
     oracle_suite_factory: Callable[[], OracleSuite] | None = None,
     model_path_resolver: Callable[[str, str], tuple[Path, str]] | None = None,
     worker_command_runner: CommandRunner | None = None,
@@ -160,6 +168,7 @@ def main(
         default=None,
         help="XCodec torch device; defaults to auto, or set cpu/mps/cuda explicitly",
     )
+    parser.add_argument("--enhancement-vae-path", type=Path, default=None)
     parser.add_argument(
         "--generation-oracles",
         choices=("signal", "unqualified"),
@@ -319,10 +328,18 @@ def main(
         model_path, model_repo = active_model_path_resolver(args.model, args.profile)
 
     xcodec_config: XCodec1Config | None = None
+    enhancement_config: EnhancementVaeConfig | None = None
     if not args.materialize_only and decoder_factory is None:
         xcodec_config = resolve_xcodec1_config(
             explicit_path=args.xcodec1_path,
             device=args.xcodec_device,
+        )
+        from .sound_lab.cli import _resolve_or_download_enhancement_vae
+
+        enhancement_config = _resolve_or_download_enhancement_vae(
+            args.enhancement_vae_path,
+            model=args.model,
+            device=args.xcodec_device or "auto",
         )
 
     hf_token = os.environ.get("HF_TOKEN") or _dotenv_value("HF_TOKEN")
@@ -493,9 +510,20 @@ def main(
     runtime = active_runtime_factory(model_path, args.profile)
     if decoder_factory is None:
         assert xcodec_config is not None
-        decoder = XCodec1WavDecoder(xcodec_config)
+        decoder = XCodec1WavDecoder(
+            xcodec_config,
+            allow_nvidia_reference_output=True,
+            target_seconds=10.0,
+        )
+        assert enhancement_config is not None
+        enhancer = NvidiaEnhancementVae(enhancement_config)
     else:
         decoder = decoder_factory(xcodec_config)
+        enhancer = (
+            enhancer_factory(enhancement_config)
+            if enhancer_factory is not None
+            else None
+        )
     summary = AudioEvaluationRunner(
         understanding=AudexVllmUnderstandingAdapter(runtime=runtime),
         generation=AudexVllmTtaGenerationAdapter(
@@ -503,6 +531,8 @@ def main(
             raw_dir=run.run_dir / "media" / "raw",
             enhanced_dir=run.run_dir / "media" / "enhanced",
             decode_to_wav=decoder,
+            enhance_wav=enhancer,
+            allow_nvidia_reference_output=decoder_factory is None,
         ),
         oracles=active_oracle_suite_factory(),
     ).run(

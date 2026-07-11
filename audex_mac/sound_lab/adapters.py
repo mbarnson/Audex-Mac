@@ -30,7 +30,7 @@ from .tools import RenderSoundsCall, parse_sound_lab_tool_call
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _PLANNER_MAX_TOKENS = 768
 _DESIGNER_MAX_TOKENS = 1536
-MINIMUM_EARLY_PREVIEW_SECONDS = 1.0
+NVIDIA_CFG_PAIRS_PER_BATCH = 2
 _RETRY_SEED_XOR = 0x5A17_D3C9
 
 _RENDER_SOUNDS_TOOL = {
@@ -79,10 +79,12 @@ has completed because the tool runs after your response."""
 
 _DESIGNER_SYSTEM_PROMPT = """You are Audex Sound Lab's sound designer.
 Expand one creative request into the exact requested number of genuinely
-different text-to-audio captions. Vary meaningful acoustic dimensions such as
-source, distance, environment, material, temporal envelope, intensity, or
-recording character. Preserve every explicit constraint. Each caption must
-describe only audible content and must stand alone as a text-to-audio prompt.
+different AudioCaps-style captions. Each caption is one literal present-tense
+sentence of 3 to 24 words describing only what is audible: source, action,
+environment, distance, and simple timing when relevant. Vary meaningful
+acoustic dimensions while preserving explicit constraints. Never write an
+instruction, production request, quality claim, negative prompt, rationale, or
+phrases such as create, generate, sound effect, cinematic, or high-quality.
 Return only strict JSON with this shape:
 {"variants":[{"caption":"...","difference":"..."}]}
 Do not use markdown."""
@@ -224,15 +226,29 @@ class AudexTtaSoundGenerator:
         *,
         runtime: Any,
         decode_to_wav: Any,
+        enhance_wav: Any | None = None,
         adapter_factory: Callable[..., AudexVllmTtaGenerationAdapter] = (
             AudexVllmTtaGenerationAdapter
         ),
     ) -> None:
         self._runtime = runtime
         self._decode_to_wav = decode_to_wav
+        self._enhance_wav = enhance_wav
         self._adapter_factory = adapter_factory
 
     def generate_many(
+        self,
+        requests: tuple[SoundGenerationRequest, ...],
+        *,
+        output_dir: Path,
+    ) -> Iterator[SoundGenerationOutcome]:
+        for start in range(0, len(requests), NVIDIA_CFG_PAIRS_PER_BATCH):
+            yield from self._generate_wave(
+                requests[start : start + NVIDIA_CFG_PAIRS_PER_BATCH],
+                output_dir=output_dir,
+            )
+
+    def _generate_wave(
         self,
         requests: tuple[SoundGenerationRequest, ...],
         *,
@@ -250,7 +266,8 @@ class AudexTtaSoundGenerator:
             raw_dir=output_dir / "raw",
             enhanced_dir=output_dir / "enhanced",
             decode_to_wav=self._decode_to_wav,
-            allow_early_preview_seconds=MINIMUM_EARLY_PREVIEW_SECONDS,
+            enhance_wav=self._enhance_wav,
+            allow_nvidia_reference_output=True,
         )
         attempts = adapter.generate_many(cases)
         retry_indexes: list[int] = []
@@ -346,7 +363,7 @@ def _sound_lab_success(
         asset_id=request.asset_id,
         generated=GeneratedSound(
             wav_path=wav_path,
-            duration_seconds=attempt.structure.duration_seconds,
+            duration_seconds=10.0,
             elapsed_seconds=elapsed_seconds,
             seed_used=seed_used,
         ),
@@ -378,9 +395,7 @@ def _technical_attempt_record(*, seed: int, error: Exception) -> SoundGeneration
 
 
 def _sound_lab_attempt_usable(attempt: Any) -> bool:
-    return bool(attempt.structure.valid) or attempt.structure.usable_early_preview(
-        minimum_duration_seconds=MINIMUM_EARLY_PREVIEW_SECONDS
-    )
+    return bool(attempt.structure.nvidia_reference_decodable)
 
 
 def _sound_lab_failure(
@@ -458,6 +473,10 @@ def _parse_variants(
         )
         if caption is None:
             raise ValueError(f"Sound Lab variant {index} caption is invalid")
+        if not _is_literal_audio_caption(caption):
+            raise ValueError(
+                f"Sound Lab variant {index} is not a literal AudioCaps-style caption"
+            )
         if difference is None:
             raise ValueError(f"Sound Lab variant {index} difference is invalid")
         variants.append(
@@ -471,6 +490,27 @@ def _parse_variants(
     if len(normalized_captions) != len(variants):
         raise ValueError("Sound Lab designer returned duplicate captions")
     return tuple(variants)
+
+
+def _is_literal_audio_caption(caption: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", caption)
+    if not 3 <= len(words) <= 24:
+        return False
+    lowered = " ".join(caption.casefold().split())
+    forbidden = (
+        "create ",
+        "generate ",
+        "make ",
+        "sound effect",
+        "high-quality",
+        "high quality",
+        "cinematic",
+        "audio of ",
+        "please ",
+        "do not ",
+        "without ",
+    )
+    return not any(phrase in lowered for phrase in forbidden)
 
 
 def _extract_design_payload(raw: str) -> dict[str, Any]:

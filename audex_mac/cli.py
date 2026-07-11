@@ -89,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         from .sound_lab.cli import main as run_sound_lab_cli
 
         return run_sound_lab_cli(raw_argv[1:])
+    if raw_argv[:1] == ["tta-quant-quality"]:
+        from .tta_quality_cli import main as run_tta_quality_cli
+
+        return run_tta_quality_cli(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Audex-Mac local speech demo")
     parser.add_argument("--thinking", action="store_true", help="allow thinking mode")

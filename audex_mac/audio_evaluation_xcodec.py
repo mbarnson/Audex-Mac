@@ -42,6 +42,8 @@ class XCodec1WavDecoder:
         torch_module: Any | None = None,
         sample_rate: int = 16_000,
         allow_early_preview_seconds: float | None = None,
+        allow_nvidia_reference_output: bool = False,
+        target_seconds: float | None = None,
     ) -> None:
         self.config = config
         self._codec_loader = codec_loader or load_xcodec1_model
@@ -49,6 +51,8 @@ class XCodec1WavDecoder:
         self._codec: Any | None = None
         self.sample_rate = sample_rate
         self.allow_early_preview_seconds = allow_early_preview_seconds
+        self.allow_nvidia_reference_output = allow_nvidia_reference_output
+        self.target_seconds = target_seconds
 
     def __call__(
         self,
@@ -63,7 +67,13 @@ class XCodec1WavDecoder:
             torch_module=self._torch_module,
             device=self.config.device,
             allow_early_preview_seconds=self.allow_early_preview_seconds,
+            allow_nvidia_reference_output=self.allow_nvidia_reference_output,
         )
+        if self.target_seconds is not None:
+            waveform = _pad_or_trim_waveform(
+                waveform,
+                target_samples=round(self.target_seconds * self.sample_rate),
+            )
         _write_pcm16_wav(destination, waveform, sample_rate=self.sample_rate)
 
     def _load_codec(self) -> Any:
@@ -180,6 +190,7 @@ def decode_xcodec1_inspection(
     torch_module: Any | None = None,
     device: str = "auto",
     allow_early_preview_seconds: float | None = None,
+    allow_nvidia_reference_output: bool = False,
 ) -> tuple[float, ...]:
     """Decode valid flat interleaved RVQ codec IDs to mono waveform samples."""
 
@@ -189,7 +200,10 @@ def decode_xcodec1_inspection(
             minimum_duration_seconds=allow_early_preview_seconds
         )
     )
-    if not inspection.valid and not preview_allowed:
+    reference_allowed = (
+        allow_nvidia_reference_output and inspection.nvidia_reference_decodable
+    )
+    if not inspection.valid and not preview_allowed and not reference_allowed:
         raise ValueError(f"cannot decode invalid TTA structure: {inspection.failures}")
     if not inspection.codec_ids:
         raise ValueError("cannot decode empty TTA codec stream")
@@ -226,6 +240,14 @@ def decode_xcodec1_inspection(
         host_values = audio_values.cpu()
         waveform = host_values.numpy()
     return tuple(float(sample) for sample in waveform)
+
+
+def _pad_or_trim_waveform(
+    waveform: tuple[float, ...], *, target_samples: int
+) -> tuple[float, ...]:
+    if len(waveform) >= target_samples:
+        return waveform[:target_samples]
+    return (*waveform, *((1e-3,) * (target_samples - len(waveform))))
 
 
 def _write_pcm16_wav(

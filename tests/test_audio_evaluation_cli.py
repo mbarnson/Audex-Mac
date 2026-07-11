@@ -536,6 +536,7 @@ def test_audio_evaluation_cli_executes_standard_from_prepared_cases(
         ],
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
         worker_command_runner=fake_worker,
         case_manifest_validator=lambda _cases, _tier: None,
     )
@@ -703,6 +704,7 @@ def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_ora
         materialize_audio=fake_materialize,
         runtime_factory=lambda model_path, profile: runtime,
         decoder_factory=lambda _config: _decode_to_silent_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
     )
 
     assert exit_code == 2
@@ -761,6 +763,7 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
         materialize_audio=fake_materialize,
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
     )
 
     assert exit_code == 0
@@ -786,7 +789,7 @@ def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
     assert enhanced_path.parent == run_dir / "media" / "enhanced"
     with wave.open(str(enhanced_path), "rb") as enhanced:
         assert enhanced.getframerate() == 48_000
-        assert enhanced.getnchannels() == 2
+        assert enhanced.getnchannels() == 1
     clap_request = json.loads(
         (run_dir / "generation" / "clap-request.json").read_text(encoding="utf-8")
     )
@@ -895,6 +898,7 @@ def test_audio_evaluation_cli_passes_explicit_capability_targets(
         materialize_audio=fake_materialize,
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
     )
 
     assert exit_code == 0
@@ -945,6 +949,7 @@ def test_audio_evaluation_cli_reports_capability_failure_for_missed_targets(
         materialize_audio=fake_materialize,
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
     )
 
     assert exit_code == 2
@@ -1014,6 +1019,7 @@ def test_audio_evaluation_cli_executes_from_materialized_case_run(
         fetch_rows=fake_fetch,
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
     )
 
     assert execute_exit == 0
@@ -1079,6 +1085,7 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
         materialize_audio=fake_materialize,
         runtime_factory=fake_runtime_factory,
         decoder_factory=lambda _config: _decode_to_tone_wav,
+        enhancer_factory=lambda _config: _enhance_to_tone_wav,
         model_path_resolver=fake_resolver,
     )
 
@@ -1295,6 +1302,11 @@ def _decode_to_tone_wav(inspection: Any, destination: Path, case: Any) -> None:
     _write_tone_wav(destination)
 
 
+def _enhance_to_tone_wav(source: Path, destination: Path, case: Any) -> None:
+    del source, case
+    _write_tone_wav(destination, sample_rate=48_000)
+
+
 def _write_silent_wav(path: Path) -> None:
     import wave
 
@@ -1306,17 +1318,17 @@ def _write_silent_wav(path: Path) -> None:
         wav.writeframes(b"\x00\x00" * 1600)
 
 
-def _write_tone_wav(path: Path) -> None:
+def _write_tone_wav(path: Path, *, sample_rate: int = 16_000) -> None:
     import math
     import wave
 
     path.parent.mkdir(parents=True, exist_ok=True)
     frames = bytearray()
-    for index in range(8000):
-        sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / 16_000))
+    for index in range(sample_rate // 2):
+        sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / sample_rate))
         frames.extend(sample.to_bytes(2, "little", signed=True))
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
-        wav.setframerate(16_000)
+        wav.setframerate(sample_rate)
         wav.writeframes(bytes(frames))

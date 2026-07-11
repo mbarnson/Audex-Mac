@@ -221,7 +221,7 @@ for arg in "$@"; do
     --refresh-deps)
       REFRESH_DEPS=1
       ;;
-    eval-audio-capabilities)
+    eval-audio-capabilities|tta-quant-quality)
       NEEDS_AUDIO_EVAL_DEPS=1
       ARGS+=("${arg}")
       ARGS_COUNT=$((ARGS_COUNT + 1))

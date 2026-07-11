@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "master_seed": 20260710,
+  "cases": [
+    {
+      "case_id": "door-slam",
+      "caption": "A heavy wooden door slams once in a quiet empty hallway."
+    },
+    {
+      "case_id": "dog-barks",
+      "caption": "A large dog barks three times inside a reverberant concrete garage."
+    },
+    {
+      "case_id": "rain-thunder",
+      "caption": "Steady rain falls on a metal roof with distant rolling thunder."
+    },
+    {
+      "case_id": "dishes-water",
+      "caption": "Ceramic dishes clatter while running water splashes into a kitchen sink."
+    },
+    {
+      "case_id": "passing-motorcycle",
+      "caption": "A motorcycle approaches from far away, passes close by, and recedes."
+    },
+    {
+      "case_id": "five-knocks",
+      "caption": "A person knocks a steady five-beat rhythm on a hollow wooden table."
+    },
+    {
+      "case_id": "solo-cello",
+      "caption": "A solo cello plays a slow low melody in a small room."
+    },
+    {
+      "case_id": "crickets-campfire",
+      "caption": "Crickets chirp continuously beside a crackling campfire in a quiet forest."
+    }
+  ]
+}

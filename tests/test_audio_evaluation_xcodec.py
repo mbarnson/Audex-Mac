@@ -175,6 +175,35 @@ def test_xcodec1_wav_decoder_writes_pcm16_wav(tmp_path: Path) -> None:
     assert info.channels == 1
 
 
+def test_xcodec1_reference_decoder_pads_phase_valid_early_audio_to_target(
+    tmp_path: Path,
+) -> None:
+    inspection = TtaOutputInspection(
+        codec_ids=(0, 1025, 2050, 3075),
+        codec_token_count=4,
+        frame_count=1,
+        duration_seconds=0.02,
+        reached_end_token=True,
+        first_phase_mismatch=None,
+        unexpected_token_ids=(),
+        failures=("incomplete_target",),
+    )
+    destination = tmp_path / "padded.wav"
+    decoder = XCodec1WavDecoder(
+        XCodec1Config(path=tmp_path, device="mps"),
+        codec_loader=lambda _config: FakeCodec(),
+        torch_module=FakeTorch(),
+        allow_nvidia_reference_output=True,
+        target_seconds=0.01,
+    )
+
+    decoder(inspection, destination, case=None)
+
+    import soundfile as sf
+
+    assert sf.info(destination).frames == 160
+
+
 def test_xcodec1_wav_decoder_peak_normalizes_before_pcm16_write(tmp_path: Path) -> None:
     config = XCodec1Config(path=tmp_path, device="mps")
     inspection = TtaOutputInspection(

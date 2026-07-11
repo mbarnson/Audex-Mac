@@ -21,28 +21,28 @@ The working near-real-time conversation path remains isolated.
 Phase 1 is implemented as a typed vertical slice through `./sound.sh`. It uses a
 single persistent Audex/vLLM Metal runtime for strict tool planning, designed
 variant captions, and continuously batched CFG3 text-to-audio generation. One
-five-way audition is submitted as ten lockstep conditional/unconditional
-sequences instead of five serial two-sequence jobs. `sound.sh` gives this bounded
-workload an 8K engine context and ten non-paged KV slots; those settings are
+five-way audition is submitted in waves of at most two lockstep CFG pairs,
+matching NVIDIA's documented `cfg-pairs-per-batch=2`. `sound.sh` gives this bounded
+workload an 8K engine context and four non-paged KV slots; those settings are
 scoped to Sound Lab and do not change `start.sh`. The local blind board opens
 automatically, publishes complete XCodec WAVs, records a winner and note, and
 persists recipes and artifacts under `.audex/sound-lab/`.
 
 Generation failures use a separate exploratory policy from the autonomous
-benchmark. The benchmark still requires its pinned ten-second target. Sound Lab
-also accepts an explicit model end after at least one second when the RVQ frames
-and token phases are otherwise clean: a short bark or impact is a legitimate
-sound, not necessarily a failed ten-second sound. Tiny or malformed candidates
-are retried once, together in one smaller batch with deterministic alternate
-seeds. A second failure remains in the catalog with failure classes, frame count,
-duration, and end-token status.
+benchmark. Sound Lab now follows NVIDIA's released inference script: any
+nonempty phase-valid codec stream is decoded, truncated or padded with `1e-3`
+near-silence to ten seconds, then enhanced. Phase-invalid candidates retry once
+in waves of at most two pairs with deterministic alternate seeds. A second
+failure remains in the catalog with failure classes, frame count, duration, and
+end-token status.
 
 Every initial and retry attempt retains its actual seed, timing, frame count,
 duration, end-token status, and failure classes; a recovered candidate reveals
 the retry seed that actually produced its WAV. First-pass successes are yielded
 to the catalog before the retry batch begins, so a retry-engine failure cannot
-turn an already-ready candidate into a failure. The production XCodec decoder
-uses the same explicit early-preview policy as the token inspector.
+turn an already-ready candidate into a failure. Board WAVs pass through
+NVIDIA's released 48 kHz enhancement VAE; raw 16 kHz XCodec1 WAVs remain beside
+them for diagnosis.
 
 This is deliberately not described as the complete v1 product. The terminal is
 render-blocking in Phase 1. Explicit scheduler work classes, concurrent parent
@@ -51,7 +51,7 @@ catalog memory remain Phases 2 through 4 below. `start.sh` behavior remains
 unchanged.
 
 Local validation on 2026-07-10: `scripts/lint.sh` passed and
-`.venv/bin/python -m pytest -m fast` passed 748 tests with 3 intentionally
+`.venv/bin/python -m pytest -m fast` passed 758 tests with 4 intentionally
 deselected. The loopback board integration used a real ephemeral HTTP server.
 An owner-run Apple Silicon audition produced recognizable dog barks through the
 full CFG3/XCodec path. The continuous-batch and bounded-retry revision still
@@ -556,9 +556,10 @@ the agreed product release by itself. Phase 5 is optional follow-on work.
 - accept typed prompt input before adding microphone interaction;
 - validate one `render_sounds` tool call;
 - generate a small designed CFG3 batch through the existing full TTA adapter,
-  with every CFG pair continuously scheduled in one engine submission;
-- salvage structurally clean early endings, retry unusable candidates once as a
-  smaller batch, and retain actionable failure diagnostics;
+  with at most two CFG pairs continuously scheduled per NVIDIA-shaped wave;
+- decode phase-valid streams, pad/trim to the fixed ten-second target, retry
+  phase-invalid candidates once, and retain actionable failure diagnostics;
+- preserve raw XCodec1 audio and audition NVIDIA enhancement-VAE output;
 - save artifacts and a minimal SQLite catalog;
 - display blind candidates on an automatically opened local board;
 - record a winner, rejection, and note;

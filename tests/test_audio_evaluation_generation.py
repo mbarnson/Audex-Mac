@@ -158,3 +158,4 @@ def test_clean_early_end_is_usable_only_as_an_explicit_preview_policy() -> None:
     assert result.duration_seconds == 2.0
     assert result.usable_early_preview(minimum_duration_seconds=1.0) is True
     assert result.usable_early_preview(minimum_duration_seconds=3.0) is False
+    assert result.nvidia_reference_decodable is True

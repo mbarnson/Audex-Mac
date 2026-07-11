@@ -91,6 +91,12 @@ class TtaOutputInspection:
             and self.duration_seconds >= minimum_duration_seconds
         )
 
+    @property
+    def nvidia_reference_decodable(self) -> bool:
+        """Match NVIDIA TTA: decode any nonempty phase-valid codec stream."""
+
+        return self.frame_count > 0 and self.first_phase_mismatch is None
+
 
 def build_tta_requests(
     tokenizer: Any,

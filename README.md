@@ -56,18 +56,30 @@ through a separate entrypoint:
 Type a request such as `audition five genuinely different explosion sounds`.
 Audex first emits a validated Nemotron XML tool call, then uses the same loaded
 model to design distinct captions and render them with NVIDIA's CFG3
-text-to-audio recipe. All requested CFG pairs are submitted to vLLM Metal as one
-continuous batch; unusable candidates receive one bounded retry without holding
-successful candidates to the same retry. A loopback-only browser board opens
+text-to-audio recipe. Sound Lab now defaults to NVIDIA's BF16 checkpoint,
+literal AudioCaps-style captions, fixed ten-second targets, and waves of at most
+two CFG pairs. Raw XCodec1 WAVs are passed through NVIDIA's released enhancement
+VAE before audition. Unusable candidates receive one bounded retry without
+holding successful candidates to the same retry. A loopback-only browser board opens
 automatically and shows a blind A-E rack. Complete XCodec WAVs are playable on
 the board; prompts and seeds remain hidden until reveal.
 
-Short sounds are allowed to end naturally. Sound Lab accepts a structurally
-clean model end after at least one second even though the reproducible evaluation
-harness retains its strict ten-second generation target. Failures remain in the
-local catalog with token-structure and duration diagnostics. Initial and retry
+Generation follows NVIDIA's released script: any nonempty phase-valid stream is
+decoded, trimmed or near-silence-padded to ten seconds, then enhanced. Phase
+violations retry once. Failures remain in
+the local catalog with token-structure and duration diagnostics. Initial and retry
 attempts retain their actual seeds and timing; successful first-pass candidates
 are published before a retry batch begins.
+
+To compare the local NVFP4 quantization with the upstream BF16 checkpoint under
+identical prompts, seeds, CFG settings, XCodec1 decoding, and enhancement:
+
+```sh
+./compare-quant.sh
+```
+
+This produces eight blind BF16/NVFP4 pairs under `.audex/listening/`; the
+private profile key remains separately under `.audex/runs/`.
 
 Sound Lab stores its SQLite catalog and WAV artifacts under
 `.audex/sound-lab/`, which is excluded from Git. If XCodec1 is not already

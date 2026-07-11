@@ -200,6 +200,27 @@ def test_audex_designer_repairs_duplicate_captions() -> None:
 
 
 @pytest.mark.fast
+def test_audex_designer_repairs_meta_prompt_into_literal_audio_caption() -> None:
+    meta = """{"variants":[
+{"caption":"Create a cinematic high-quality dog sound effect.","difference":"meta prompt"}
+]}"""
+    literal = """{"variants":[
+{"caption":"A large dog barks three times in a concrete garage.","difference":"large dog indoors"}
+]}"""
+    runtime = FakeRuntime((meta, literal))
+
+    result = AudexVariantDesigner(runtime=runtime).design(
+        RenderSoundsCall("One dog bark", 1, {}, ()),
+        job_id="job-literal-caption",
+    )
+
+    assert result.repair_used is True
+    assert result.variants[0].caption == (
+        "A large dog barks three times in a concrete garage."
+    )
+
+
+@pytest.mark.fast
 def test_audex_designer_retains_first_attempt_when_repair_inference_fails() -> None:
     first = "not json"
     runtime = FakeRuntime((first, RuntimeError("engine stopped")))
@@ -216,25 +237,24 @@ def test_audex_designer_retains_first_attempt_when_repair_inference_fails() -> N
 
 
 @pytest.mark.fast
-def test_sound_generator_salvages_clean_early_audio_and_retries_only_failures(
+def test_sound_generator_uses_two_pair_waves_and_pads_phase_valid_early_audio(
     tmp_path: Path,
 ) -> None:
     early = _generation_attempt(tmp_path, failures=("incomplete_target",), frames=100)
     tiny = _generation_attempt(tmp_path, failures=("incomplete_target",), frames=20)
     malformed = _generation_attempt(
         tmp_path,
-        failures=("missing_end_token", "incomplete_target"),
+        failures=("rvq_phase_mismatch",),
         frames=50,
-        reached_end=False,
+        phase_mismatch=True,
     )
-    recovered = _generation_attempt(tmp_path, failures=(), frames=500)
     still_bad = _generation_attempt(
         tmp_path,
-        failures=("missing_end_token", "incomplete_target"),
+        failures=("rvq_phase_mismatch",),
         frames=40,
-        reached_end=False,
+        phase_mismatch=True,
     )
-    adapter = FakeGenerationAdapter(((early, tiny, malformed), (recovered, still_bad)))
+    adapter = FakeGenerationAdapter(((early, tiny), (malformed,), (still_bad,)))
 
     outcomes = tuple(
         AudexTtaSoundGenerator(
@@ -251,26 +271,24 @@ def test_sound_generator_salvages_clean_early_audio_and_retries_only_failures(
         )
     )
 
-    assert [len(call) for call in adapter.calls] == [3, 2]
-    assert adapter.calls[1][0][1] != 22
-    assert adapter.calls[1][1][1] != 33
+    assert [len(call) for call in adapter.calls] == [2, 1, 1]
+    assert all(len(call) <= 2 for call in adapter.calls)
     assert outcomes[0].generated is not None
-    assert outcomes[0].generated.duration_seconds == 2.0
+    assert outcomes[0].generated.duration_seconds == 10.0
+    assert outcomes[0].generated.elapsed_seconds == 1.5
+    assert outcomes[0].attempts[0].failures == ("incomplete_target",)
     assert outcomes[1].generated is not None
-    assert outcomes[1].generated.elapsed_seconds == 3.0
-    assert outcomes[1].generated.seed_used == adapter.calls[1][0][1]
-    assert [attempt.seed for attempt in outcomes[1].attempts] == [
-        22,
-        adapter.calls[1][0][1],
-    ]
+    assert outcomes[1].generated.elapsed_seconds == 1.5
+    assert outcomes[1].generated.seed_used == 22
+    assert [attempt.seed for attempt in outcomes[1].attempts] == [22]
     assert outcomes[1].attempts[0].failures == ("incomplete_target",)
     assert outcomes[2].error is not None
     assert "after one retry" in outcomes[2].error
-    assert "initial=(seed=33; missing_end_token; incomplete_target" in outcomes[2].error
+    assert "initial=(seed=33; rvq_phase_mismatch" in outcomes[2].error
     assert "retry=(seed=" in outcomes[2].error
-    assert "missing_end_token; incomplete_target; frames=40" in outcomes[2].error
+    assert "rvq_phase_mismatch; frames=40" in outcomes[2].error
     assert "frames=40" in outcomes[2].error
-    assert "reached_end=False" in outcomes[2].error
+    assert "reached_end=True" in outcomes[2].error
 
 
 @pytest.mark.fast
@@ -280,9 +298,9 @@ def test_sound_generator_preserves_first_pass_success_and_retry_failure_evidence
     ready = _generation_attempt(tmp_path, failures=(), frames=500)
     malformed = _generation_attempt(
         tmp_path,
-        failures=("missing_end_token", "incomplete_target"),
+        failures=("rvq_phase_mismatch",),
         frames=10,
-        reached_end=False,
+        phase_mismatch=True,
     )
     adapter = ExplodingRetryAdapter((ready, malformed))
     outcomes = AudexTtaSoundGenerator(
@@ -347,6 +365,7 @@ def _generation_attempt(
     failures: tuple[str, ...],
     frames: int,
     reached_end: bool = True,
+    phase_mismatch: bool = False,
 ) -> GenerationAttempt:
     path = tmp_path / f"{frames}-{'-'.join(failures) or 'valid'}.wav"
     path.write_bytes(b"RIFF")
@@ -359,7 +378,11 @@ def _generation_attempt(
             frame_count=frames,
             duration_seconds=frames / 50,
             reached_end_token=reached_end,
-            first_phase_mismatch=None,
+            first_phase_mismatch=(
+                {"index": 0, "codec_id": 1024, "actual_phase": 1, "expected_phase": 0}
+                if phase_mismatch
+                else None
+            ),
             unexpected_token_ids=(),
             failures=failures,
         ),

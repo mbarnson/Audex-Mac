@@ -31,6 +31,7 @@ dev = [
   "pytest>=9.0.0",
   "pytest-bdd>=8.0.0",
   "ruff>=0.14.0",
+  "soundfile>=0.12",
 ]
 
 [project.scripts]

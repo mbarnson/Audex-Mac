@@ -201,11 +201,19 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
         decoded.append(inspection)
         _write_tone_wav(destination)
 
+    enhanced_calls: list[tuple[Path, Path]] = []
+
+    def enhancer(source: Path, destination: Path, case: AudioEvaluationCase) -> None:
+        del case
+        enhanced_calls.append((source, destination))
+        _write_tone_wav(destination, sample_rate=48_000)
+
     attempt = AudexVllmTtaGenerationAdapter(
         runtime=runtime,
         raw_dir=tmp_path / "raw",
         enhanced_dir=tmp_path / "enhanced",
         decode_to_wav=decoder,
+        enhance_wav=enhancer,
     ).generate(_generation_case(), seed=456)
 
     assert len(runtime.requests) == 2
@@ -216,9 +224,10 @@ def test_generation_adapter_uses_tta_cfg_pair_and_injected_decoder(
     assert attempt.raw_wav_path.is_file()
     assert attempt.enhanced_wav_path == tmp_path / "enhanced" / "audiocaps-1.wav"
     assert attempt.enhanced_wav_path.is_file()
+    assert enhanced_calls == [(attempt.raw_wav_path, attempt.enhanced_wav_path)]
     with wave.open(str(attempt.enhanced_wav_path), "rb") as enhanced:
         assert enhanced.getframerate() == 48_000
-        assert enhanced.getnchannels() == 2
+        assert enhanced.getnchannels() == 1
         assert enhanced.getnframes() == 4800
     assert attempt.signal_metrics["nonempty"] is True
     assert attempt.signal_metrics["rms"] > 0.0
@@ -324,16 +333,16 @@ def _write_silent_wav(path: Path) -> None:
         wav.writeframes(b"\x00\x00" * 1600)
 
 
-def _write_tone_wav(path: Path) -> None:
+def _write_tone_wav(path: Path, *, sample_rate: int = 16_000) -> None:
     import math
     import wave
 
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
-        wav.setframerate(16_000)
+        wav.setframerate(sample_rate)
         frames = bytearray()
-        for index in range(1600):
-            sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / 16_000))
+        for index in range(sample_rate // 10):
+            sample = int(8000 * math.sin(2.0 * math.pi * 440.0 * index / sample_rate))
             frames.extend(sample.to_bytes(2, "little", signed=True))
         wav.writeframes(bytes(frames))
