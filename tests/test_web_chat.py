@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -208,3 +209,49 @@ def test_generated_sound_assets_receive_chat_scoped_playback_urls(
         )
         == sound
     )
+
+
+@pytest.mark.fast
+def test_rename_waits_for_inflight_turn_and_cannot_be_overwritten(
+    tmp_path: Path,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    renamed = threading.Event()
+
+    class BlockingRuntime(FakeConversationRuntime):
+        def respond(self, **_kwargs) -> RuntimeTurn:
+            started.set()
+            assert release.wait(timeout=2)
+            return RuntimeTurn("Hello", "Hi")
+
+    class BlockingFactory:
+        def create(self, chat_id: str) -> BlockingRuntime:
+            return BlockingRuntime(chat_id)
+
+    store = WebChatStore(tmp_path / "chats")
+    coordinator = ChatCoordinator(store=store, runtime_factory=BlockingFactory())
+    chat = coordinator.create_chat()
+    submit_thread = threading.Thread(
+        target=lambda: coordinator.submit(
+            chat.chat_id,
+            mode=ChatMode.TEXT_TEXT,
+            text="Hello",
+        )
+    )
+
+    def rename() -> None:
+        coordinator.rename_chat(chat.chat_id, "Renamed safely")
+        renamed.set()
+
+    submit_thread.start()
+    assert started.wait(timeout=1)
+    rename_thread = threading.Thread(target=rename)
+    rename_thread.start()
+
+    assert renamed.wait(timeout=0.05) is False
+    release.set()
+    submit_thread.join(timeout=2)
+    rename_thread.join(timeout=2)
+
+    assert store.load(chat.chat_id).title == "Renamed safely"

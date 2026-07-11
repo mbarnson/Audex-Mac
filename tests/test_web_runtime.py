@@ -50,7 +50,11 @@ class FakeAudexSession:
         self.calls.append(("understand", (input_wav_path, prompt)))
         return SimpleNamespace(
             transcript=prompt,
-            response_text="Soft rain on a metal roof",
+            response_text=(
+                "Soft rain on a metal roof"
+                if "AudioCaps-style" in prompt
+                else "Rain is falling steadily on a metal roof."
+            ),
         )
 
 
@@ -137,12 +141,14 @@ def test_runtime_routes_understanding_and_unblinded_sound_generation(
     )
     continued = runtime.respond(
         mode=ChatMode.AUDIO_AUDIO,
-        text=None,
+        text="Make the drops heavier and closer.",
         audio_path=input_wav,
     )
 
-    assert understood.transcript == "What is happening in this recording?"
-    assert understood.response_text == "Soft rain on a metal roof"
+    assert understood.transcript == (
+        "Soft rain on a metal roof\n\nQuestion: " "What is happening in this recording?"
+    )
+    assert understood.response_text == "Rain is falling steadily on a metal roof."
     assert generated.transcript == "Rain on a metal roof"
     assert generated.response_text == "I generated two playable variations."
     assert [asset["caption"] for asset in generated.assets] == [
@@ -150,10 +156,15 @@ def test_runtime_routes_understanding_and_unblinded_sound_generation(
         "Heavy rain rattles a distant metal awning.",
     ]
     assert all(asset["audio_path"].endswith(".wav") for asset in generated.assets)
-    assert continued.transcript == "Soft rain on a metal roof"
+    assert continued.transcript == (
+        "Soft rain on a metal roof\n\nDirection: " "Make the drops heavier and closer."
+    )
     assert sounds.prompts == [
         "Rain on a metal roof",
-        "Soft rain on a metal roof",
+        (
+            "Soft rain on a metal roof\n\nCreative direction: "
+            "Make the drops heavier and closer."
+        ),
     ]
 
 

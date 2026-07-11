@@ -69,6 +69,7 @@ from .vllm_runtime import (
     AudexVllmRuntime,
     VllmRequestResult,
     VllmStreamDelta,
+    extract_spoken_answer,
     scrub_spoken_answer,
 )
 from .vllm_speech import (
@@ -475,7 +476,7 @@ class VllmSpeechToSpeechSession:
             result = self.runtime.generate_one(request)
         else:
             raise RuntimeError("Audex vLLM runtime is not configured.")
-        response_text = result.text.strip()
+        response_text = extract_spoken_answer(result.text)
         self._clear_mlx_cache()
         run_log_path = self.output_dir / (
             f"audio-understanding-vllm-{time.time_ns()}.json"

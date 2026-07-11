@@ -15,6 +15,7 @@ from ..audio_evaluation_enhancement import (
 )
 from ..audio_evaluation_xcodec import XCodec1WavDecoder, xcodec1_artifact_identity
 from ..audio_runtime import preflight_audio_runtime
+from ..bootstrap import model_download_notice
 from ..conversations import ConversationStore
 from ..model_select import (
     HuggingFaceSnapshotProbe,
@@ -171,6 +172,7 @@ def _resolve_model(
     model: str,
     model_path: Path | None,
     yes_download: bool,
+    input_func: Callable[[str], str] = input,
 ):
     if model == "auto":
         selection = select_model(HuggingFaceSnapshotProbe(), readiness="speech")
@@ -187,10 +189,25 @@ def _resolve_model(
             raise FileNotFoundError(f"Audex model path does not exist: {resolved}")
         return selected, resolved
     if not cached:
-        if not yes_download:
+        approved = yes_download
+        if not approved:
+            print(
+                model_download_notice(
+                    selected.repo_id,
+                    (
+                        "a very large download"
+                        if selected.higher_reasoning
+                        else "about 10 GB"
+                    ),
+                )
+            )
+            approved = input_func("Download now? [y/N] ").strip().lower() in {
+                "y",
+                "yes",
+            }
+        if not approved:
             raise RuntimeError(
-                f"Audex model is not cached: {selected.repo_id}. "
-                "Run again with --yes-download."
+                "Model download was not approved; startup cannot continue."
             )
         download_model_snapshot(selected, readiness="speech")
     preflight = preflight_audio_runtime(selected)

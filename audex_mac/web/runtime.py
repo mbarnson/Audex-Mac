@@ -118,11 +118,23 @@ class AudexConversationRuntime:
             )
             return _conversation_turn(result, output_audio=True)
         if mode is ChatMode.AUDIO_TEXT:
-            result = self.session.understand_audio(
-                input_wav_path=_require_audio(audio_path, mode),
-                prompt=(text or DEFAULT_AUDIO_UNDERSTANDING_PROMPT),
+            source = _require_audio(audio_path, mode)
+            caption = self.session.understand_audio(
+                input_wav_path=source,
+                prompt=REFERENCE_AUDIO_CAPTION_PROMPT,
             )
-            return _conversation_turn(result)
+            question = text or DEFAULT_AUDIO_UNDERSTANDING_PROMPT
+            answer = self.session.understand_audio(
+                input_wav_path=source,
+                prompt=question,
+            )
+            visible_prompt = caption.response_text.strip()
+            if text:
+                visible_prompt = f"{visible_prompt}\n\nQuestion: {text.strip()}"
+            return RuntimeTurn(
+                transcript=visible_prompt,
+                response_text=answer.response_text,
+            )
         if mode is ChatMode.TEXT_AUDIO:
             prompt = _require_text(text, mode)
             message, assets = self.sound_backend.generate(prompt)
@@ -134,14 +146,20 @@ class AudexConversationRuntime:
         if mode is ChatMode.AUDIO_AUDIO:
             understood = self.session.understand_audio(
                 input_wav_path=_require_audio(audio_path, mode),
-                prompt=text or REFERENCE_AUDIO_CAPTION_PROMPT,
+                prompt=REFERENCE_AUDIO_CAPTION_PROMPT,
             )
             caption = understood.response_text.strip()
             if not caption:
                 raise ValueError("Audex could not describe the reference audio.")
-            message, assets = self.sound_backend.generate(caption)
+            direction = text.strip() if text else ""
+            generation_prompt = caption
+            visible_prompt = caption
+            if direction:
+                generation_prompt = f"{caption}\n\nCreative direction: {direction}"
+                visible_prompt = f"{caption}\n\nDirection: {direction}"
+            message, assets = self.sound_backend.generate(generation_prompt)
             return RuntimeTurn(
-                transcript=caption,
+                transcript=visible_prompt,
                 response_text=message,
                 assets=tuple(asset.to_dict() for asset in assets),
             )

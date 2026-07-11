@@ -99,3 +99,39 @@ def test_web_cli_builds_local_application_without_loading_model_until_first_turn
     application, kwargs = served[0]
     assert application.coordinator.runtime_factory.loaded is False
     assert kwargs == {"host": "127.0.0.1", "port": 0, "on_ready": None}
+
+
+def test_web_model_resolution_prompts_before_first_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class MissingProbe:
+        def is_cached(self, _model, readiness="speech") -> bool:
+            assert readiness == "speech"
+            return False
+
+    downloads: list[tuple[str, str]] = []
+    monkeypatch.setattr(cli, "HuggingFaceSnapshotProbe", MissingProbe)
+    monkeypatch.setattr(
+        cli,
+        "download_model_snapshot",
+        lambda model, readiness: downloads.append((model.repo_id, readiness)),
+    )
+    monkeypatch.setattr(
+        cli,
+        "preflight_audio_runtime",
+        lambda _model: SimpleNamespace(model_path=tmp_path / "downloaded"),
+    )
+
+    selected, resolved = cli._resolve_model(
+        model="2b",
+        model_path=None,
+        yes_download=False,
+        input_func=lambda prompt: "yes" if prompt == "Download now? [y/N] " else "",
+    )
+
+    assert selected.repo_id == "nvidia/Nemotron-Labs-Audex-2B"
+    assert resolved == tmp_path / "downloaded"
+    assert downloads == [(selected.repo_id, "speech")]
+    assert "NVIDIA's model license" in capsys.readouterr().out

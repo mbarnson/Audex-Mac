@@ -63,7 +63,8 @@ class ChatCoordinator:
         return self.store.create(mode=mode)
 
     def rename_chat(self, chat_id: str, title: str) -> WebChat:
-        return self.store.rename(chat_id, title)
+        with self._lock_for(chat_id):
+            return self.store.rename(chat_id, title)
 
     def submit(
         self,

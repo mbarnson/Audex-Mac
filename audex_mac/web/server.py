@@ -54,6 +54,8 @@ class AudexWebApplication:
             return _error(400, str(exc))
         except KeyError as exc:
             return _error(404, str(exc).strip("'"))
+        except Exception as exc:
+            return _error(500, f"{type(exc).__name__}: {exc}")
 
     def _dispatch(self, method: str, path: str, body: bytes) -> HttpResponse:
         if method == "GET" and path == "/api/bootstrap":
@@ -238,7 +240,7 @@ def _error(status: int, message: str) -> HttpResponse:
 
 
 def _static_response(name: str) -> HttpResponse:
-    if name not in {"index.html", "app.css", "app.js"}:
+    if name not in {"index.html", "app.css", "app.js", "audio.js"}:
         return _error(404, "Static asset not found.")
     path = STATIC_ROOT / name
     if not path.is_file():

@@ -148,6 +148,7 @@ def test_http_application_serves_the_browser_shell_and_assets(tmp_path: Path) ->
     index = application.dispatch("GET", "/")
     styles = application.dispatch("GET", "/assets/app.css")
     script = application.dispatch("GET", "/assets/app.js")
+    audio_script = application.dispatch("GET", "/assets/audio.js")
 
     assert index.status == 200
     assert b"Choose a mode" in index.body
@@ -156,6 +157,37 @@ def test_http_application_serves_the_browser_shell_and_assets(tmp_path: Path) ->
     assert b".message-bubble" in styles.body
     assert "javascript" in script.content_type
     assert b"createWavRecorder" in script.body
+    assert b"button.title = mode.description" in script.body
+    assert b"state.chat.messages = state.chat.messages.filter" in script.body
+    assert b"module.exports" in audio_script.body
+
+
+@pytest.mark.fast
+def test_http_application_returns_structured_model_errors(tmp_path: Path) -> None:
+    output = tmp_path / "unused.wav"
+    output.write_bytes(b"RIFF")
+    coordinator = ChatCoordinator(
+        store=WebChatStore(tmp_path / "chats"),
+        runtime_factory=RecordingFactory(output),
+    )
+    application = AudexWebApplication(
+        coordinator=coordinator,
+        upload_root=tmp_path / "uploads",
+    )
+    chat_id = _json(application.dispatch("POST", "/api/chats", b"{}"))["chat"]["id"]
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("local model ran out of memory")
+
+    coordinator.submit = explode
+    response = application.dispatch(
+        "POST",
+        f"/api/chats/{chat_id}/turns",
+        json.dumps({"mode": "text-text", "text": "Hello"}).encode(),
+    )
+
+    assert response.status == 500
+    assert _json(response)["error"] == ("RuntimeError: local model ran out of memory")
 
 
 @pytest.mark.fast

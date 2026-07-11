@@ -11,6 +11,33 @@ Development is intended to happen publicly at
 issues and pull requests. This file is the running technical diary for evidence
 that changes the viability picture.
 
+## Browser Interface Evidence (2026-07-11)
+
+The local browser interface was verified at three levels:
+
+- The repository pre-commit hook passed all 785 selected fast tests after the
+  real multimodal adapter integration. Focused web/runtime coverage exercises
+  the seven-mode router, per-chat persistence, shared-engine conversation
+  switching, text-only no-TTS turns, audio understanding, immediate unblinded
+  Sound Lab assets, structured HTTP errors, rename/inference serialization, and
+  browser PCM/WAV conversion.
+- A live fixture server was opened in the in-app browser. Text submission,
+  persistent history, editable title surface, mode dock, bubbles, and error-free
+  asset loading were inspected at the default 1280×720 viewport. The responsive
+  layout was then inspected at 390×844; an intrinsic-width bug that clipped user
+  bubbles and the composer was found and fixed. The final measured panel,
+  message column, and composer stayed within the 390-pixel viewport.
+- `./start.sh web --help`, JavaScript syntax checks, shell syntax checks, and the
+  loopback application-construction path were run locally without loading a
+  model.
+
+This Codex sandbox does not expose a usable Metal device, microphone permission,
+or the local model runtime. Consequently this pass did **not** claim a live
+Audex GPU turn, measured prefix-cache hit, microphone capture, or CFG3 sound
+render. Those remain local-hardware UAT items. The fast tests verify the cache
+identity/state arguments and absence of runtime reconstruction across mode/chat
+switches; they are not a substitute for vLLM Metal timing evidence.
+
 ## Model Findings
 
 ### Audex-2B
