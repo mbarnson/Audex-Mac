@@ -617,28 +617,28 @@ def asks_confirmation(ctx: dict) -> None:
 # Licensing
 
 
-@given("the user reads README.md")
-def read_readme(ctx: dict) -> None:
-    ctx["readme"] = (Path(__file__).resolve().parents[1] / "README.md").read_text(
-        encoding="utf-8"
-    )
+@given("the user reads the licensing documentation")
+def read_licensing_documentation(ctx: dict) -> None:
+    ctx["licensing"] = (
+        Path(__file__).resolve().parents[1] / "docs/project/licensing.md"
+    ).read_text(encoding="utf-8")
 
 
-@then("the README says Audex-Mac source code is MIT licensed")
-def readme_mit(ctx: dict) -> None:
-    assert "Audex-Mac source code is MIT licensed" in ctx["readme"]
+@then("the licensing documentation says Audex-Mac source code is MIT licensed")
+def licensing_docs_mit(ctx: dict) -> None:
+    assert "Audex-Mac source code is MIT licensed" in ctx["licensing"]
 
 
-@then("the README says NVIDIA model weights are governed by NVIDIA's license")
-def readme_nvidia_license(ctx: dict) -> None:
-    assert "model weights" in ctx["readme"]
-    assert "NVIDIA" in ctx["readme"]
+@then("it says NVIDIA model weights are governed by NVIDIA's license")
+def licensing_docs_nvidia_license(ctx: dict) -> None:
+    assert "model weights" in ctx["licensing"]
+    assert "NVIDIA" in ctx["licensing"]
 
 
-@then("the README links to the Audex model cards")
-def readme_model_cards(ctx: dict) -> None:
-    assert "Nemotron-Labs-Audex-2B" in ctx["readme"]
-    assert "Nemotron-Labs-Audex-30B-A3B" in ctx["readme"]
+@then("it links to the Audex model cards")
+def licensing_docs_model_cards(ctx: dict) -> None:
+    assert "Nemotron-Labs-Audex-2B" in ctx["licensing"]
+    assert "Nemotron-Labs-Audex-30B-A3B" in ctx["licensing"]
 
 
 @when("start.sh asks before downloading a model")

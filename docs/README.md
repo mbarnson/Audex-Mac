@@ -9,6 +9,8 @@ engineering and operating material lives here.
   explicit non-goals.
 - [Development workflow](project/development.md) — public development, review,
   CI, and artifact discipline.
+- [Licensing and local artifacts](project/licensing.md) — what the MIT license
+  covers, what NVIDIA licenses separately, and what must stay out of Git.
 
 ## Operations
 
