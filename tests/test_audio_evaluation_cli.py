@@ -387,7 +387,7 @@ def test_audio_evaluation_cli_materializes_standard_manifest(
     assert not (run_dir / "generation" / "openl3-request.json").exists()
 
 
-def test_audio_evaluation_cli_blocks_full_execution_until_paper_metrics(
+def test_audio_evaluation_cli_requires_isolated_workers_for_full_execution(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -408,7 +408,17 @@ def test_audio_evaluation_cli_blocks_full_execution_until_paper_metrics(
             ),
         )
 
-    assert "full execution is blocked" in capsys.readouterr().err
+    assert "full execution requires --semantic-worker-python" in capsys.readouterr().err
+
+
+def test_full_openl3_execution_requires_exact_paper_corpus_counts() -> None:
+    audio_evaluation_cli._require_full_openl3_corpus_counts(
+        {"audiocaps": 4_875, "song-describer": 746}
+    )
+    with pytest.raises(RuntimeError, match="exact paper corpora"):
+        audio_evaluation_cli._require_full_openl3_corpus_counts(
+            {"audiocaps": 4_874, "song-describer": 746}
+        )
 
 
 def test_audio_evaluation_cli_executes_standard_from_prepared_cases(

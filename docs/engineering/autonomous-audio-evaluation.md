@@ -465,6 +465,11 @@ Current implementation status:
   by stable case tag, technical failure rates, and per-track timing/throughput
   diagnostics with run start/finalization timestamps, wall-clock seconds, and
   platform-reported process peak RSS.
+- `audex_mac/audio_evaluation_targets.py` derives named Standard regression
+  target profiles from complete protocol-valid baseline summaries, applies the
+  documented 2-point understanding and 5-point hard-foil tolerances, preserves
+  the baseline structural-failure count, and exposes BF16-only Full-tier paper
+  reproduction targets for the published Audex 30B/2B scores.
 - `audex_mac/audio_evaluation_hf.py` verifies Hugging Face dataset revisions,
   paginates dataset-server rows, fails on truncated cells, and materializes only
   selected audio assets into local 16 kHz WAV cache files.
@@ -553,17 +558,19 @@ Current implementation status:
   pinned manifest/cache preparation and
   `audex-mac eval-audio-capabilities --tier standard --materialize-only` for the
   Standard manifest/cache. `--tier full --materialize-only` prepares the
-  Full-tier manifest/cache from all supplied pinned rows. Full execution is
-  intentionally blocked until paper-style full-corpus metrics exist. Without
-  `--materialize-only`, smoke and standard execution resolve the selected
+  Full-tier manifest/cache from all supplied pinned rows. Without
+  `--materialize-only`, smoke, standard, and full execution resolve the selected
   already-cached Audex speech checkpoint, or accept an explicit `--model-path`
-  override. It still requires `XCODEC1_PATH` or `--xcodec1-path`, runs the vLLM
-  understanding/generation adapters, decodes raw 16 kHz XCodec WAVs, runs the
-  signal-sanity oracle by default, and writes run artifacts. Standard execution
-  additionally requires explicit `--semantic-worker-python` and
-  `--semantic-worker-device` so CLAP and AST semantic workers run in an
-  isolated, fail-loud environment with no device fallback. Execution accepts
-  repeated `--capability-target NAME=VALUE` arguments for explicit
+  override. They still require `XCODEC1_PATH` or `--xcodec1-path`, run the vLLM
+  understanding/generation adapters, decode raw 16 kHz XCodec WAVs, run the
+  signal-sanity oracle by default, and write run artifacts. Standard and full
+  execution additionally require explicit `--semantic-worker-python`,
+  `--semantic-worker-device`, `--openl3-reference-stats-root`,
+  `--openl3-worker-python`, and `--openl3-implementation-file` so CLAP, AST,
+  and OpenL3 workers run in isolated, fail-loud environments with no device
+  fallback. Full execution also verifies the staged OpenL3 corpus counts match
+  the exact paper corpora before running workers. Execution accepts repeated
+  `--capability-target NAME=VALUE` arguments for explicit
   `PASS`/`CAPABILITY_FAIL` verdicts. The
   smoke/standard/full manifest/environment records model
   selection, Hugging Face snapshot revisions when paths expose them, model-card
@@ -713,13 +720,18 @@ Local evidence on 2026-07-10:
   therefore operational; this four-clip value is a plumbing diagnostic, not a
   paper-comparable model score.
 
-Likely future command, after full paper-style execution exists:
+Full paper-style execution command shape:
 
 ```sh
-audex-mac eval-audio-capabilities --tier full --model 30b --profile bf16
+audex-mac eval-audio-capabilities --tier full \
+  --model 30b --profile bf16 \
+  --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced \
+  --semantic-worker-python /path/to/audio-eval/bin/python \
+  --semantic-worker-device mps \
+  --openl3-reference-stats-root /path/to/openl3-reference-stats \
+  --openl3-worker-python /path/to/openl3-worker/bin/python \
+  --openl3-implementation-file /path/to/stable-audio-metrics/src/openl3_fd.py
 ```
-
-Do not add these to the runbook until they exist.
 
 ## Sources
 

@@ -591,6 +591,57 @@ def test_run_summary_reports_capability_failures_against_named_targets(
 
 
 @pytest.mark.fast
+def test_run_summary_applies_semantic_and_paper_reproduction_targets(
+    tmp_path: Path,
+) -> None:
+    sound = _case("sound-1", "sound")
+    music = _case("music-1", "music")
+    generation = _generation_case("audiocaps-1")
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="paper-targets",
+        tier="full",
+        master_seed=17,
+        cases=(sound, music, generation),
+        manifest_metadata={"model": {"repository": "nvidia/audex"}},
+    )
+    for case in (sound, music):
+        run.record_output(
+            case_id=case.case_id,
+            payload={"raw_answer": "B", "valid": True, "correct": True},
+        )
+    run.record_output(
+        case_id=generation.case_id,
+        payload={
+            "structurally_valid": True,
+            "structure_failures": [],
+            "signal_metrics": {"finite": True, "nonempty": True},
+        },
+    )
+    run.record_generation_metrics(
+        case_id=generation.case_id,
+        payload={"hard_foil_win": True},
+    )
+    run.record_generation_aggregate_metrics(
+        {"fd_openl3_by_dataset": {"audiocaps": 66.9}}
+    )
+
+    summary = run.finalize(
+        required_oracles_qualified=True,
+        capability_targets={
+            "understanding_sound_accuracy_min": 0.97,
+            "understanding_music_accuracy_min": 0.97,
+            "hard_foil_win_rate_min": 0.95,
+            "generation_structural_failures_max": 0,
+            "fd_openl3_audiocaps_max": 70.0,
+        },
+    )
+
+    assert summary.verdict is RunVerdict.PASS
+    assert summary.capability_failures == ()
+
+
+@pytest.mark.fast
 def test_protocol_failures_dominate_capability_targets(tmp_path: Path) -> None:
     case = _case("sound-1", "sound")
     run = AudioEvaluationRun.create(

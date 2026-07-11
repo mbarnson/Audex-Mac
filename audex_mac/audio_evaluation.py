@@ -379,23 +379,27 @@ class AudioEvaluationRun:
             if effective_failures
             else _evaluate_capability_targets(
                 targets=target_payload,
-                metrics={
-                    "accuracy": accuracy,
-                    "balanced_accuracy": balanced_accuracy,
-                    "invalid_response_rate": invalid_rate,
-                    "technical_failure_rate": technical_failures.get(
-                        "technical_failure_rate"
-                    ),
-                    "generation_structural_failure_rate": (
-                        (
-                            int(generation["completed_cases"])
-                            - int(generation["structurally_valid"])
-                        )
-                        / int(generation["completed_cases"])
-                        if int(generation["completed_cases"])
-                        else None
-                    ),
-                },
+                metrics=_capability_metrics(
+                    understanding_by_category=understanding_by_category,
+                    generation=generation,
+                    base={
+                        "accuracy": accuracy,
+                        "balanced_accuracy": balanced_accuracy,
+                        "invalid_response_rate": invalid_rate,
+                        "technical_failure_rate": technical_failures.get(
+                            "technical_failure_rate"
+                        ),
+                        "generation_structural_failure_rate": (
+                            (
+                                int(generation["completed_cases"])
+                                - int(generation["structurally_valid"])
+                            )
+                            / int(generation["completed_cases"])
+                            if int(generation["completed_cases"])
+                            else None
+                        ),
+                    },
+                ),
             )
         )
         if effective_failures:
@@ -943,6 +947,42 @@ def _evaluate_capability_targets(
         else:
             failures.append(f"{target_name}:unsupported_target_suffix")
     return tuple(failures)
+
+
+def _capability_metrics(
+    *,
+    understanding_by_category: Mapping[str, Mapping[str, Any]],
+    generation: Mapping[str, Any],
+    base: Mapping[str, float | None],
+) -> dict[str, float | None]:
+    metrics = dict(base)
+    for category in ("sound", "music"):
+        category_metrics = understanding_by_category.get(category, {})
+        accuracy = category_metrics.get("accuracy")
+        metrics[f"understanding_{category}_accuracy"] = (
+            float(accuracy) if _is_number(accuracy) else None
+        )
+    completed = int(generation.get("completed_cases", 0))
+    structurally_valid = int(generation.get("structurally_valid", 0))
+    metrics["generation_structural_failures"] = float(completed - structurally_valid)
+    semantic = generation.get("semantic_metrics", {})
+    if isinstance(semantic, Mapping):
+        clap = semantic.get("clap", {})
+        if isinstance(clap, Mapping):
+            hard_foil_win_rate = clap.get("hard_foil_win_rate")
+            metrics["hard_foil_win_rate"] = (
+                float(hard_foil_win_rate) if _is_number(hard_foil_win_rate) else None
+            )
+        openl3 = semantic.get("openl3", {})
+        if isinstance(openl3, Mapping):
+            by_dataset = openl3.get("fd_openl3_by_dataset", {})
+            if isinstance(by_dataset, Mapping):
+                for dataset, value in by_dataset.items():
+                    key = str(dataset).replace("-", "_")
+                    metrics[f"fd_openl3_{key}"] = (
+                        float(value) if _is_number(value) else None
+                    )
+    return metrics
 
 
 def _utc_now() -> str:

@@ -71,6 +71,12 @@ from .audio_evaluation_suite import (
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
 )
+from .audio_evaluation_targets import (
+    BaselineTargetProfile,
+    baseline_target_profile,
+    merge_capability_targets,
+    paper_reproduction_targets,
+)
 from .audio_evaluation_worker_pipeline import (
     CommandRunner,
     GenerationWorkerConfig,
@@ -211,6 +217,17 @@ def main(
         ),
     )
     parser.add_argument(
+        "--baseline-name",
+        default=None,
+        help="stable human-readable name of a blessed local regression baseline",
+    )
+    parser.add_argument(
+        "--baseline-summary",
+        type=Path,
+        default=None,
+        help="summary.json from the named complete protocol-valid baseline run",
+    )
+    parser.add_argument(
         "--skip-esc50",
         action="store_true",
         help=(
@@ -229,15 +246,41 @@ def main(
     )
     args = parser.parse_args(argv)
     try:
-        capability_targets = _parse_capability_targets(
+        explicit_targets = _parse_capability_targets(
             tuple(args.capability_target or ())
         )
     except ValueError as exc:
         parser.error(str(exc))
     if args.materialize_only and args.cases_from_run is not None:
         parser.error("--cases-from-run is only valid for execution runs")
-    if args.materialize_only and capability_targets:
+    if args.materialize_only and explicit_targets:
         parser.error("--capability-target is only valid for execution runs")
+    if (args.baseline_name is None) != (args.baseline_summary is None):
+        parser.error("--baseline-name and --baseline-summary must be supplied together")
+    if args.materialize_only and args.baseline_summary is not None:
+        parser.error("named baselines are only valid for execution runs")
+    baseline: BaselineTargetProfile | None = None
+    if args.baseline_summary is not None:
+        try:
+            baseline = baseline_target_profile(
+                name=str(args.baseline_name),
+                summary_path=args.baseline_summary,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(f"invalid named baseline: {exc}")
+    capability_targets = merge_capability_targets(
+        explicit_targets,
+        baseline.targets if baseline is not None else {},
+        (
+            {}
+            if args.materialize_only
+            else paper_reproduction_targets(
+                tier=args.tier,
+                model=args.model,
+                profile=args.profile,
+            )
+        ),
+    )
     if args.tier in {"standard", "full"} and not args.materialize_only:
         if args.semantic_worker_python is None:
             parser.error(
@@ -382,6 +425,16 @@ def main(
                 else None
             ),
             "capability_targets": capability_targets,
+            "target_profile": {
+                "paper_reproduction": bool(
+                    paper_reproduction_targets(
+                        tier=args.tier,
+                        model=args.model,
+                        profile=args.profile,
+                    )
+                ),
+                "baseline": asdict(baseline) if baseline is not None else None,
+            },
             "oracle_registry": _oracle_registry_payload(),
             "omitted_datasets": _omitted_datasets(args),
             "source_cases_run": (
