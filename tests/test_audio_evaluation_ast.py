@@ -11,12 +11,14 @@ from audex_mac.audio_evaluation_ast import (
     AstCaseRequest,
     AstQualificationRequest,
     build_ast_case_requests,
+    build_ast_qualification_requests,
     build_ast_worker_command,
     load_ast_worker_result,
     write_ast_worker_request,
 )
 from audex_mac.audio_evaluation_ast_backend import require_torch_device
 from audex_mac.audio_evaluation_ast_labels import (
+    ESC50_AST_EXPECTED_LABELS,
     PINNED_AST_LABEL_FIXTURE_VOCABULARY,
     STRUCTURED_CONTROL_AST_LABELS,
     explicit_ast_label_maps,
@@ -49,6 +51,25 @@ def _generation_case(
     )
 
 
+def _esc50_case(*, case_id: str, category: str) -> AudioEvaluationCase:
+    return AudioEvaluationCase(
+        case_id=case_id,
+        track=EvaluationTrack.UNDERSTANDING,
+        dataset_id="ashraq/esc50",
+        dataset_revision="rev1",
+        dataset_config="default",
+        dataset_split="train",
+        source_row_id=f"{case_id}.wav",
+        source_row_hash=f"hash-{case_id}",
+        license="CC-BY-NC-3.0",
+        category=category,
+        prompt="Return YES or NO.",
+        expected_answer="YES",
+        audio_path=f"/cache/{case_id}.wav",
+        choices=("YES", "NO"),
+    )
+
+
 def test_structured_control_ast_labels_match_the_pinned_checkpoint_vocabulary() -> None:
     used_labels = {
         label
@@ -62,6 +83,16 @@ def test_structured_control_ast_labels_match_the_pinned_checkpoint_vocabulary() 
     assert "Wind noise (microphone)" in used_labels
 
 
+def test_esc50_ast_label_map_covers_all_fixed_categories() -> None:
+    assert len(ESC50_AST_EXPECTED_LABELS) == 50
+    assert ESC50_AST_EXPECTED_LABELS["dog"] == ("Dog",)
+    assert ESC50_AST_EXPECTED_LABELS["mouse_click"] == ("Mouse", "Clicking")
+    assert ESC50_AST_EXPECTED_LABELS["washing_machine"] == (
+        "Mechanical fan",
+        "Hum",
+    )
+
+
 def test_explicit_ast_label_maps_cover_only_hand_authored_control_cases() -> None:
     labeled = _generation_case(source_row_id="quantity-01")
     unlabeled = _generation_case(
@@ -73,6 +104,25 @@ def test_explicit_ast_label_maps_cover_only_hand_authored_control_cases() -> Non
 
     assert expected == {labeled.case_id: ("Dog", "Bark")}
     assert forbidden == {labeled.case_id: ("Speech", "Music")}
+
+
+def test_ast_qualification_uses_one_fixed_mapping_per_esc50_class() -> None:
+    requests = build_ast_qualification_requests(
+        (
+            _esc50_case(case_id="dog-b", category="dog"),
+            _esc50_case(case_id="dog-a", category="dog"),
+            _generation_case(),
+        )
+    )
+
+    assert requests == (
+        AstQualificationRequest(
+            case_id="dog-a",
+            audio_path="/cache/dog-a.wav",
+            expected_labels=("Dog",),
+            forbidden_labels=("Chicken, rooster", "Pig", "Cattle, bovinae"),
+        ),
+    )
 
 
 def test_ast_worker_request_requires_explicit_expected_labels(
@@ -352,6 +402,7 @@ def test_ast_worker_scores_expected_and_forbidden_event_labels(
         "status": "NOT_RUN",
         "thresholds": {
             "max_forbidden_label_false_positive_rate": 0.15,
+            "min_case_count": 50,
             "min_expected_label_hit_rate": 0.85,
         },
     }
@@ -461,6 +512,10 @@ def test_ast_worker_qualifies_with_fixed_label_calibration(
     monkeypatch.setattr(
         "audex_mac.audio_evaluation_ast_worker._missing_modules",
         lambda _names: (),
+    )
+    monkeypatch.setattr(
+        "audex_mac.audio_evaluation_ast_worker.AST_MIN_QUALIFICATION_CASES",
+        2,
     )
 
     exit_code = run_worker(

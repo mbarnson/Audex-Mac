@@ -16,6 +16,7 @@ AST_EXPECTED_LABEL_MIN_PROBABILITY = 0.10
 AST_FORBIDDEN_LABEL_MIN_PROBABILITY = 0.10
 AST_MIN_QUALIFICATION_EXPECTED_HIT_RATE = 0.85
 AST_MAX_QUALIFICATION_FORBIDDEN_FALSE_POSITIVE_RATE = 0.15
+AST_MIN_QUALIFICATION_CASES = 50
 AST_TOP_K = 10
 
 
@@ -218,6 +219,13 @@ def _qualify(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
             "status": "NOT_RUN",
             "thresholds": _qualification_thresholds(),
         }
+    if len(requests) < AST_MIN_QUALIFICATION_CASES:
+        return {
+            "qualified": False,
+            "status": "INSUFFICIENT_CASES",
+            "case_count": len(requests),
+            "thresholds": _qualification_thresholds(),
+        }
     result = _score_label_requests(
         requests,
         path_field="audio_path",
@@ -250,6 +258,7 @@ def _qualify(payload: Mapping[str, Any], *, backend: Any) -> dict[str, Any]:
 
 def _qualification_thresholds() -> dict[str, float]:
     return {
+        "min_case_count": AST_MIN_QUALIFICATION_CASES,
         "min_expected_label_hit_rate": AST_MIN_QUALIFICATION_EXPECTED_HIT_RATE,
         "max_forbidden_label_false_positive_rate": (
             AST_MAX_QUALIFICATION_FORBIDDEN_FALSE_POSITIVE_RATE

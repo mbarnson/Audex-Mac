@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack
+from .audio_evaluation_esc50 import ESC50_HARD_NEGATIVES
 
 # Keep this local subset small and explicit so structured-control fixtures
 # cannot silently introduce arbitrary caption-derived labels.
@@ -48,6 +49,64 @@ PINNED_AST_LABEL_FIXTURE_VOCABULARY = frozenset(
         "Wind noise (microphone)",
     }
 )
+
+# Hand-audited against AST_REVISION's id2label. A few ESC-50 classes without an
+# exact AudioSet class intentionally use the nearest explicit event labels.
+ESC50_AST_EXPECTED_LABELS: dict[str, tuple[str, ...]] = {
+    "dog": ("Dog",),
+    "rooster": ("Chicken, rooster",),
+    "pig": ("Pig",),
+    "cow": ("Cattle, bovinae",),
+    "frog": ("Frog",),
+    "cat": ("Cat",),
+    "hen": ("Chicken, rooster",),
+    "insects": ("Insect",),
+    "sheep": ("Sheep",),
+    "crow": ("Crow",),
+    "rain": ("Rain",),
+    "sea_waves": ("Waves, surf",),
+    "crackling_fire": ("Crackle",),
+    "crickets": ("Cricket",),
+    "chirping_birds": ("Bird vocalization, bird call, bird song",),
+    "water_drops": ("Drip",),
+    "wind": ("Wind",),
+    "pouring_water": ("Pour",),
+    "toilet_flush": ("Toilet flush",),
+    "thunderstorm": ("Thunderstorm",),
+    "crying_baby": ("Baby cry, infant cry",),
+    "sneezing": ("Sneeze",),
+    "clapping": ("Clapping",),
+    "breathing": ("Breathing",),
+    "coughing": ("Cough",),
+    "footsteps": ("Walk, footsteps",),
+    "laughing": ("Laughter",),
+    "brushing_teeth": ("Toothbrush",),
+    "snoring": ("Snoring",),
+    "drinking_sipping": ("Liquid",),
+    "door_wood_knock": ("Knock",),
+    "mouse_click": ("Mouse", "Clicking"),
+    "keyboard_typing": ("Typing",),
+    "door_wood_creaks": ("Creak",),
+    "can_opening": ("Creak", "Clicking"),
+    "washing_machine": ("Mechanical fan", "Hum"),
+    "vacuum_cleaner": ("Vacuum cleaner",),
+    "clock_alarm": ("Alarm clock",),
+    "clock_tick": ("Tick-tock",),
+    "glass_breaking": ("Glass",),
+    "helicopter": ("Helicopter",),
+    "chainsaw": ("Chainsaw",),
+    "siren": ("Siren",),
+    "car_horn": ("Vehicle horn, car horn, honking",),
+    "engine": ("Engine",),
+    "train": ("Train",),
+    "church_bells": ("Church bell",),
+    "airplane": ("Aircraft",),
+    "fireworks": ("Fireworks",),
+    "hand_saw": ("Sawing",),
+}
+
+if ESC50_AST_EXPECTED_LABELS.keys() != ESC50_HARD_NEGATIVES.keys():
+    raise RuntimeError("ESC-50 AST label map must cover the fixed 50 categories")
 
 STRUCTURED_CONTROL_AST_LABELS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "quantity-01": (("Dog", "Bark"), ("Speech", "Music")),

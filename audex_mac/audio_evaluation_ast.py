@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack
+from .audio_evaluation_ast_labels import ESC50_AST_EXPECTED_LABELS
+from .audio_evaluation_datasets import ESC50_DATASET_ID
+from .audio_evaluation_esc50 import ESC50_HARD_NEGATIVES
 
 AST_WORKER_MODULE = "audex_mac.audio_evaluation_ast_worker"
 AST_REQUEST_SCHEMA = 1
@@ -98,6 +101,46 @@ def build_ast_case_requests(
             AstCaseRequest(
                 case_id=case.case_id,
                 generated_wav_path=str(generated_wav),
+                expected_labels=expected_labels,
+                forbidden_labels=forbidden_labels,
+            )
+        )
+    return tuple(requests)
+
+
+def build_ast_qualification_requests(
+    cases: Iterable[AudioEvaluationCase],
+) -> tuple[AstQualificationRequest, ...]:
+    """Build one fixed AST calibration request per represented ESC-50 class."""
+
+    first_case_by_category: dict[str, AudioEvaluationCase] = {}
+    for case in sorted(cases, key=lambda item: item.case_id):
+        if (
+            case.track is EvaluationTrack.UNDERSTANDING
+            and case.dataset_id == ESC50_DATASET_ID
+        ):
+            first_case_by_category.setdefault(case.category, case)
+    requests: list[AstQualificationRequest] = []
+    for category in sorted(first_case_by_category):
+        case = first_case_by_category[category]
+        if not case.audio_path:
+            raise ValueError(f"ESC-50 case {case.case_id} has no audio path")
+        expected_labels = ESC50_AST_EXPECTED_LABELS.get(category)
+        negatives = ESC50_HARD_NEGATIVES.get(category)
+        if expected_labels is None or negatives is None:
+            raise ValueError(f"ESC-50 case has unknown category: {category}")
+        forbidden_labels = tuple(
+            dict.fromkeys(
+                label
+                for negative in negatives
+                for label in ESC50_AST_EXPECTED_LABELS[negative]
+                if label not in expected_labels
+            )
+        )
+        requests.append(
+            AstQualificationRequest(
+                case_id=case.case_id,
+                audio_path=case.audio_path,
                 expected_labels=expected_labels,
                 forbidden_labels=forbidden_labels,
             )

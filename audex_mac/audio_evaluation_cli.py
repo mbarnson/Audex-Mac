@@ -30,6 +30,7 @@ from .audio_evaluation_ast import (
     AST_REPO_ID,
     AST_REVISION,
     build_ast_case_requests,
+    build_ast_qualification_requests,
     write_ast_worker_request,
 )
 from .audio_evaluation_ast_labels import explicit_ast_label_maps
@@ -570,6 +571,7 @@ def _write_completed_generation_worker_requests(run: AudioEvaluationRun) -> None
                 expected_labels_by_case_id=expected_labels,
                 forbidden_labels_by_case_id=forbidden_labels,
             ),
+            qualification_requests=build_ast_qualification_requests(run.cases),
         )
 
 

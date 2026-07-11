@@ -165,8 +165,9 @@ Qualification gates:
   or noise corpora score materially worse, fixed vectors reproduce within
   tolerance.
 - AST/event classifier: pinned checkpoint, pinned label map, sigmoid over raw
-  logits because AudioSet is multi-label, expected accuracy on a known
-  calibration split, explicit device, no silent CPU fallback.
+  logits because AudioSet is multi-label, at least 50 fixed ESC-50 classes,
+  at least 85 percent expected-label hits, at most 15 percent hard-negative
+  false positives, explicit device, and no silent CPU fallback.
 - Kimi or Voxtral peer scorer: hidden 100-case suite across event, negative,
   temporal order, quantity, distance/quality, silence, and prompt-injection
   cases; at least 90 percent overall, at least 80 percent on every axis, at most
@@ -519,16 +520,18 @@ Current implementation status:
   request contract requires explicit expected and optional forbidden labels per
   generated WAV rather than deriving labels from captions implicitly.
   `audex_mac/audio_evaluation_ast_labels.py` provides explicit AST labels for
-  the local structured-control prompts only. The worker loads the pinned AST
+  local structured-control prompts and a hand-audited 50-class ESC-50→AudioSet
+  calibration map. The worker loads the pinned AST
   checkpoint through Transformers, validates requested labels against the
   checkpoint label map, applies sigmoid over raw logits, emits per-case
   expected-label and forbidden-label diagnostics, and records
   model/preprocess/inference timing. It also supports an explicit fixed-audio
   calibration block with expected and forbidden labels, and returns `PASS` only
-  when calibration clears the documented expected-hit and forbidden-false-
-  positive thresholds. Generation-only AST requests still return `UNSCORED`;
-  selecting and pinning a broader blessed AST calibration corpus remains future
-  work.
+  when at least 50 distinct-class cases clear the documented expected-hit and
+  hard-negative false-positive thresholds. Completed runs attach one
+  deterministic case per represented ESC-50 class. Generation-only or
+  underfilled AST requests still return `UNSCORED`; a real 50-class calibration
+  run remains to be blessed.
 - `audex_mac/audio_evaluation_openl3.py`,
   `audex_mac/audio_evaluation_openl3_backend.py`, and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
