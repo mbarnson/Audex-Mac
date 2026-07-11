@@ -38,6 +38,13 @@ def test_board_serves_blind_audio_and_records_audition(tmp_path: Path) -> None:
 
     with SoundLabBoard(catalog, opener=opened.append) as board:
         assert opened == [board.url]
+        with urllib.request.urlopen(board.url, timeout=2) as response:
+            document = response.read().decode("utf-8")
+        assert 'audio controls preload="metadata"' in document
+        guard = document.index("if (previewIsPlaying()) return;")
+        replacement = document.index("document.getElementById('jobs').innerHTML")
+        assert guard < replacement
+
         snapshot = _json_request(f"{board.url}/api/state")
         assert snapshot["jobs"][0]["candidates"][0]["label"] == "A"
         assert "caption" not in snapshot["jobs"][0]["candidates"][0]

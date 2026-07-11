@@ -231,7 +231,7 @@ async function post(path, payload) {
   await refresh();
 }
 function renderCandidate(candidate, revealed) {
-  const audio = candidate.audio_url ? `<audio controls preload="none" src="${esc(candidate.audio_url)}"></audio>` : `<div class="meta">${esc(candidate.state)}</div>`;
+  const audio = candidate.audio_url ? `<audio controls preload="metadata" src="${esc(candidate.audio_url)}"></audio>` : `<div class="meta">${esc(candidate.state)}</div>`;
   const details = revealed ? `<div class="meta">${esc(candidate.caption)}\nseed ${esc(candidate.seed)}\n${esc(candidate.difference)}</div>` : '';
   return `<section class="candidate"><div class="label">${esc(candidate.label)}</div>${audio}${details}</section>`;
 }
@@ -253,8 +253,17 @@ async function savePreference(jobId) {
   const note = root.querySelector('.note').value.trim();
   await post('/api/preferences',{job_id:jobId,selected_label:selected,rejected_labels:rejected,note});
 }
+let lastRenderedState = '';
+function previewIsPlaying() {
+  return [...document.querySelectorAll('audio')].some(audio => !audio.paused && !audio.ended);
+}
 async function refresh() {
+  if (previewIsPlaying()) return;
   const state = await (await fetch('/api/state',{cache:'no-store'})).json();
+  if (previewIsPlaying()) return;
+  const serialized = JSON.stringify(state);
+  if (serialized === lastRenderedState) return;
+  lastRenderedState = serialized;
   document.getElementById('jobs').innerHTML = state.jobs.length ? state.jobs.map(renderJob).join('') : 'Waiting for a sound request in the terminal.';
 }
 refresh(); setInterval(refresh, 1000);
