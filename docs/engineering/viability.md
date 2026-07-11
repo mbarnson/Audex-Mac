@@ -683,3 +683,11 @@ retry failure cannot invalidate candidates already published from the first
 pass. This revision has host-side test coverage but still needs an owner-run
 timing/listening pass to measure the new failure rate and continuous-batch
 throughput on Apple Silicon.
+
+The first post-batch owner rerun failed safely during engine startup: the
+headroom guard reported ten 256K non-paged slots requiring 139.86 GB against
+95.08 GB of current Metal headroom. `sound.sh` had selected the CFG3 recipe but
+had not enabled the separate vLLM CFG engine-wiring switch, so the 8K CFG context
+override was never applied. Sound Lab now exports
+`AUDEX_VLLM_ENABLE_CFG_WIRING=1` alongside its recipe, context, and capacity
+settings. The memory guard was correct and remains unchanged.
