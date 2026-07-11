@@ -223,3 +223,9 @@ def _run_async(awaitable: Any) -> Any:
         "audio evaluation adapters are synchronous; call them outside an active "
         f"event loop {loop!r}"
     )
+
+
+def run_sync_model_call(awaitable: Any) -> Any:
+    """Run one model awaitable on the shared synchronous adapter loop."""
+
+    return _run_async(awaitable)

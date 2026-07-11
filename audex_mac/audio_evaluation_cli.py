@@ -88,14 +88,12 @@ from .audio_evaluation_xcodec import (
     XCodec1WavDecoder,
     resolve_xcodec1_config,
 )
-from .audio_runtime import preflight_audio_runtime
-from .conversations import DEFAULT_DEMO_CONTEXT_TOKENS
-from .models import (
-    AUDEX_2B_REPO,
-    AUDEX_30B_NVFP4_REPO,
-    AUDEX_30B_REPO,
-    SUPPORTED_MODELS,
+from .audio_model_resolver import (
+    audio_model_repo,
+    load_audio_vllm_runtime,
+    resolve_cached_audio_model,
 )
+from .conversations import DEFAULT_DEMO_CONTEXT_TOKENS
 
 DEFAULT_AUDIO_EVAL_ROOT = Path(".audex/runs/audio-capabilities")
 DEFAULT_AUDIO_EVAL_CACHE = Path(".audex/cache/audio-eval")
@@ -311,13 +309,13 @@ def main(
         parser.error("--profile nvfp4 is only defined for --model 30b")
 
     model_path = args.model_path
-    model_repo = _repo_for_eval_model(args.model, args.profile)
+    model_repo = audio_model_repo(args.model, args.profile)
     if (
         not args.materialize_only
         and model_path is None
         and (runtime_factory is None or model_path_resolver is not None)
     ):
-        active_model_path_resolver = model_path_resolver or _resolve_cached_model_path
+        active_model_path_resolver = model_path_resolver or resolve_cached_audio_model
         model_path, model_repo = active_model_path_resolver(args.model, args.profile)
 
     xcodec_config: XCodec1Config | None = None
@@ -488,7 +486,7 @@ def main(
         print(f"Cases: {len(cases)}")
         return 0
 
-    active_runtime_factory = runtime_factory or _load_vllm_runtime
+    active_runtime_factory = runtime_factory or load_audio_vllm_runtime
     active_oracle_suite_factory = oracle_suite_factory or _oracle_suite_factory(
         args.generation_oracles
     )
@@ -993,43 +991,9 @@ def _omitted_datasets(args: argparse.Namespace) -> list[dict[str, str]]:
     return omitted
 
 
-def _load_vllm_runtime(model_path: Path | None, profile: str) -> Any:
-    del profile
-    if model_path is None:
-        raise ValueError("model_path is required for the default vLLM runtime")
-    from .vllm_runtime import AudexAsyncVllmRuntime
-
-    return AudexAsyncVllmRuntime.from_model_path(model_path)
-
-
 def _oracle_suite_factory(name: str) -> Callable[[], OracleSuite]:
     if name == "signal":
         return SignalSanityOracleSuite
     if name == "unqualified":
         return UnqualifiedOracleSuite
     raise ValueError(f"unknown generation oracle suite: {name}")
-
-
-def _repo_for_eval_model(model: str, profile: str) -> str:
-    if model == "2b":
-        return AUDEX_2B_REPO
-    if model == "30b" and profile == "nvfp4":
-        return AUDEX_30B_NVFP4_REPO
-    if model == "30b":
-        return AUDEX_30B_REPO
-    raise ValueError(
-        f"unsupported eval model selection: model={model} profile={profile}"
-    )
-
-
-def _resolve_cached_model_path(model: str, profile: str) -> tuple[Path, str]:
-    repo_id = _repo_for_eval_model(model, profile)
-    selected = next(item for item in SUPPORTED_MODELS if item.repo_id == repo_id)
-    preflight = preflight_audio_runtime(selected)
-    if preflight.ready and preflight.model_path is not None:
-        return preflight.model_path, repo_id
-    missing = ", ".join(preflight.missing_items) or "unknown missing model files"
-    raise RuntimeError(
-        f"Audex evaluation requires a complete cached speech checkpoint for "
-        f"{repo_id}; missing: {missing}. Pass --model-path to override."
-    )

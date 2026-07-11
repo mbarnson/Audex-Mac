@@ -85,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv[:1] == ["eval-audio-capabilities"]:
         return run_audio_evaluation_cli(raw_argv[1:])
+    if raw_argv[:1] == ["sound-lab"]:
+        from .sound_lab.cli import main as run_sound_lab_cli
+
+        return run_sound_lab_cli(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Audex-Mac local speech demo")
     parser.add_argument("--thinking", action="store_true", help="allow thinking mode")

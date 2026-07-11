@@ -44,6 +44,33 @@ current Metal path. Opt into the higher-quality CFG3 recipe with:
 AUDEX_VLLM_TTS_CFG=1 ./start.sh
 ```
 
+## Audex Sound Lab
+
+The first vertical slice for exploring Audex non-speech generation is available
+through a separate entrypoint:
+
+```sh
+./sound.sh
+```
+
+Type a request such as `audition five genuinely different explosion sounds`.
+Audex first emits a validated Nemotron XML tool call, then uses the same loaded
+model to design distinct captions and render them with NVIDIA's CFG3
+text-to-audio recipe. A loopback-only browser board opens automatically and
+shows a blind A-E rack. Each candidate becomes playable as soon as its complete
+XCodec WAV is ready; prompts and seeds remain hidden until reveal.
+
+Sound Lab stores its SQLite catalog and WAV artifacts under
+`.audex/sound-lab/`, which is excluded from Git. If XCodec1 is not already
+cached, the first run downloads `hf-audio/xcodec-hubert-general-balanced` from
+Hugging Face.
+
+This initial slice accepts typed prompts and blocks the terminal while a render
+job runs. Voice input, live "listen" capture, spoken progress, fair concurrent
+conversation/render scheduling, and catalog search are the next documented
+phases; they are not silently approximated here. See the
+[Sound Lab engineering design](docs/engineering/audex-sound-lab.md).
+
 Spoken turns use Audex's direct audio-to-answer capability on the latency path,
 then run Audex ASR after speech generation to persist the exact transcript. Set
 `AUDEX_VLLM_DIRECT_AUDIO_RESPONSE=0` to diagnose the older serial

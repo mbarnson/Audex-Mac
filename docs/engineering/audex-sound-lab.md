@@ -16,6 +16,26 @@ keeps a searchable local catalog of every attempt and what was learned from it.
 This is a product and implementation direction, not a change to `start.sh`.
 The working near-real-time conversation path remains isolated.
 
+## Implementation Status
+
+Phase 1 is implemented as a typed vertical slice through `./sound.sh`. It uses a
+single persistent Audex/vLLM Metal runtime for strict tool planning, designed
+variant captions, and sequential CFG3 text-to-audio generation. The local blind
+board opens automatically, publishes each completed XCodec WAV, records a
+winner and note, and persists recipes and artifacts under `.audex/sound-lab/`.
+
+This is deliberately not described as the complete v1 product. The terminal is
+render-blocking in Phase 1. Explicit scheduler work classes, concurrent parent
+conversation, spoken status, live `listen` capture, blind self-audit, and FTS5
+catalog memory remain Phases 2 through 4 below. `start.sh` behavior remains
+unchanged.
+
+Local validation on 2026-07-10: `scripts/lint.sh` passed and
+`.venv/bin/python -m pytest -m fast` passed 733 tests with 3 intentionally
+deselected. The loopback board integration used a real ephemeral HTTP server.
+This validates the host-side Phase 1 contracts; a model-backed CFG3/XCodec
+audition remains an owner-run Apple Silicon acceptance test.
+
 ## Why Build It
 
 Audex is unusual because one model can participate in all of these roles:

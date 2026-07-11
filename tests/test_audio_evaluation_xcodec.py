@@ -14,6 +14,7 @@ from audex_mac.audio_evaluation_xcodec import (
     choose_torch_device,
     decode_xcodec1_inspection,
     resolve_xcodec1_config,
+    xcodec1_artifact_identity,
 )
 
 pytestmark = pytest.mark.fast
@@ -46,6 +47,25 @@ def test_resolve_xcodec1_config_requires_explicit_or_environment_path(
         env={},
         device="cpu",
     ) == XCodec1Config(path=valid, device="cpu", repo_id=XCODEC1_REPO_ID)
+
+
+def test_xcodec1_artifact_identity_uses_snapshot_revision_or_local_content(
+    tmp_path: Path,
+) -> None:
+    revision = "a" * 40
+    snapshot = tmp_path / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    assert xcodec1_artifact_identity(snapshot) == f"hf-{revision}"
+
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "config.json").write_text("{}", encoding="utf-8")
+    first = xcodec1_artifact_identity(local)
+    (local / "model.safetensors").write_bytes(b"weights")
+    second = xcodec1_artifact_identity(local)
+    assert first.startswith("sha256-")
+    assert second.startswith("sha256-")
+    assert first != second
 
 
 def test_choose_torch_device_prefers_accelerators_and_requires_explicit_cpu() -> None:

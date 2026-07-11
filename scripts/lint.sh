@@ -17,4 +17,4 @@ cd "${ROOT_DIR}"
 
 "${PYTHON}" -m black --check audex_mac tests
 "${PYTHON}" -m ruff check audex_mac tests
-bash -n start.sh scripts/*.sh .githooks/pre-commit
+bash -n start.sh sound.sh scripts/*.sh .githooks/pre-commit

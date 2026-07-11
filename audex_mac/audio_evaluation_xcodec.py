@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +18,10 @@ from .audio_evaluation_generation import (
 )
 
 XCODEC1_REPO_ID = "hf-audio/xcodec-hubert-general-balanced"
+XCODEC1_REVISION = "ce75a648724c64dfd5ec05752caa2feafd8c03da"
 XCODEC1_ENV = "XCODEC1_PATH"
 MAX_XCODEC1_FRAMES = 500
+_HF_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +97,33 @@ def resolve_xcodec1_config(
         )
     selected_device = device or "auto"
     return XCodec1Config(path=path, device=selected_device)
+
+
+def xcodec1_artifact_identity(path: str | Path) -> str:
+    """Return the exact HF revision or a content hash for a local XCodec tree."""
+
+    root = Path(path).expanduser().resolve()
+    if _HF_REVISION_RE.fullmatch(root.name):
+        return f"hf-{root.name}"
+    files = sorted(
+        {
+            *root.glob("*.json"),
+            *root.glob("*.safetensors"),
+        },
+        key=lambda item: item.name,
+    )
+    if not files:
+        raise FileNotFoundError(
+            f"XCodec1 identity requires JSON or safetensors files: {root}"
+        )
+    digest = hashlib.sha256()
+    for file_path in files:
+        digest.update(file_path.name.encode("utf-8"))
+        digest.update(b"\0")
+        with file_path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+    return f"sha256-{digest.hexdigest()}"
 
 
 def choose_torch_device(torch_module: Any, *, requested: str | None = None) -> str:
