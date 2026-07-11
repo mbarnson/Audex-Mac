@@ -538,8 +538,8 @@ Current implementation status:
   when at least 50 distinct-class cases clear the documented expected-hit and
   hard-negative false-positive thresholds. Completed runs attach one
   deterministic case per represented ESC-50 class. Generation-only or
-  underfilled AST requests still return `UNSCORED`; a real 50-class calibration
-  run remains to be blessed.
+  underfilled AST requests still return `UNSCORED`; external calibration data
+  must cover 50 distinct classes before the AST worker can qualify itself.
 - `audex_mac/audio_evaluation_openl3.py`,
   `audex_mac/audio_evaluation_openl3_staging.py`,
   `audex_mac/audio_evaluation_openl3_backend.py`, and
@@ -621,9 +621,11 @@ Relevant current repo contracts:
   build and submit its own requests rather than modifying the live path.
 - The text modality guard in `audex_mac/vllm_sts_requests.py` deliberately
   blocks speech/audio codec and modal marker tokens for text answers. Keep it.
-- Existing TTS request builders constrain output to `<speechcodec_*>`. General
-  audio generation needs a separate builder for `<audiocodec_*>`,
-  `<audiogen_start>`, and `<audiogen_end>`.
+- Existing TTS request builders constrain output to `<speechcodec_*>`.
+  Evaluation-only text-to-audio generation uses
+  `audex_mac/audio_evaluation_generation.py`, which builds CFG request pairs for
+  `<audiocodec_*>`, `<audiogen_start>`, and `<audiogen_end>` without touching the
+  live speech path.
 - The patch ledger already records that the NVIDIA RVQ phase mask applies to
   text-to-audio `<audiocodec_*>` generation, not speech TTS.
 
