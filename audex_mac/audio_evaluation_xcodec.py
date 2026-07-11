@@ -112,7 +112,10 @@ def choose_torch_device(torch_module: Any, *, requested: str | None = None) -> s
         and bool(mps_backend.is_available())
     ):
         return "mps"
-    return "cpu"
+    raise RuntimeError(
+        "XCodec1 device=auto requested accelerator execution, but no accelerator "
+        "is available. Pass --xcodec-device cpu explicitly to allow CPU decode."
+    )
 
 
 def load_xcodec1_model(config: XCodec1Config) -> Any:

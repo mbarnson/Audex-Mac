@@ -487,8 +487,9 @@ Current implementation status:
   path with fail-loud `XCODEC1_PATH` handling, loads the Hugging Face codec only
   when evaluation decoding is requested, converts Audex's interleaved
   4-codebook RVQ stream into codec-local codebook IDs, and writes raw 16 kHz
-  PCM WAV output. Device selection defaults to `auto` (`cuda`, then `mps`, then
-  `cpu`); forcing CPU is explicit. XCodec1 weights are not bundled with Audex;
+  PCM WAV output. Device selection defaults to `auto` (`cuda`, then `mps`);
+  CPU decode is allowed only with explicit `--xcodec-device cpu`. XCodec1
+  weights are not bundled with Audex;
   use a local snapshot of `hf-audio/xcodec-hubert-general-balanced`.
 - `audex_mac/audio_evaluation_runner.py` executes cases through those adapters,
   records oracle qualification, outputs, and metrics, and treats structural,
@@ -534,13 +535,17 @@ Current implementation status:
   underfilled AST requests still return `UNSCORED`; a real 50-class calibration
   run remains to be blessed.
 - `audex_mac/audio_evaluation_openl3.py`,
+  `audex_mac/audio_evaluation_openl3_staging.py`,
   `audex_mac/audio_evaluation_openl3_backend.py`, and
   `audex_mac/audio_evaluation_openl3_worker.py` define the isolated OpenL3
-  worker request/command/result boundary. The version-2 request pins the exact
-  Stability source hash, stereo/44.1-kHz/batch-4 transform, dataset-specific
-  generated directory, exact corpus size, and precomputed reference-statistics
-  file names and SHA-256 values. The worker fails loudly outside Python 3.11,
-  rejects mixed, incomplete, or hash-mismatched corpora, self-qualifies
+  staging and worker request/command/result boundary. Staging hardlinks
+  completed enhanced metric WAVs into `media/openl3/<dataset>/<row-id>.wav`,
+  records the staged file manifest, and returns exact per-corpus counts. The
+  version-2 request pins the exact Stability source hash,
+  stereo/44.1-kHz/batch-4 transform, dataset-specific generated directory,
+  exact corpus size, and precomputed reference-statistics file names and
+  SHA-256 values. The worker fails loudly outside Python 3.11, rejects mixed,
+  incomplete, or hash-mismatched corpora, self-qualifies
   identical/permuted/unrelated/fixed-vector FD behavior, and delegates
   extraction and scoring to the pinned official source file.
 - `audex_mac/audio_evaluation_cli.py` exposes
@@ -548,26 +553,32 @@ Current implementation status:
   pinned manifest/cache preparation and
   `audex-mac eval-audio-capabilities --tier standard --materialize-only` for the
   Standard manifest/cache. `--tier full --materialize-only` prepares the
-  Full-tier manifest/cache from all supplied pinned rows. Standard and Full
-  execution are intentionally blocked until semantic generation oracles and
-  paper-style metrics exist. Without `--materialize-only`, smoke
-  execution resolves the selected already-cached Audex speech checkpoint, or
-  accepts an explicit `--model-path` override. It still requires `XCODEC1_PATH`
-  or `--xcodec1-path`, runs the vLLM understanding/generation adapters, decodes
-  raw 16 kHz XCodec WAVs, runs the signal-sanity oracle by default, and writes
-  run artifacts. Execution accepts repeated `--capability-target NAME=VALUE`
-  arguments for explicit `PASS`/`CAPABILITY_FAIL` verdicts. The
+  Full-tier manifest/cache from all supplied pinned rows. Full execution is
+  intentionally blocked until paper-style full-corpus metrics exist. Without
+  `--materialize-only`, smoke and standard execution resolve the selected
+  already-cached Audex speech checkpoint, or accept an explicit `--model-path`
+  override. It still requires `XCODEC1_PATH` or `--xcodec1-path`, runs the vLLM
+  understanding/generation adapters, decodes raw 16 kHz XCodec WAVs, runs the
+  signal-sanity oracle by default, and writes run artifacts. Standard execution
+  additionally requires explicit `--semantic-worker-python` and
+  `--semantic-worker-device` so CLAP and AST semantic workers run in an
+  isolated, fail-loud environment with no device fallback. Execution accepts
+  repeated `--capability-target NAME=VALUE` arguments for explicit
+  `PASS`/`CAPABILITY_FAIL` verdicts. The
   smoke/standard/full manifest/environment records model
   selection, Hugging Face snapshot revisions when paths expose them, model-card
   and configured engine context limits, small model/decoder config file hashes,
   the pinned CFG3 TTA recipe, constrained-answer scoring protocol, dataset
   pins/omissions, CLAP/AST/OpenL3 oracle identities and qualification gates,
   git commit and dirty diff hash, host metadata, and key dependency versions
-  without recording credentials. CLAP caption-alignment, AST event-sanity, and
-  pinned OpenL3 FD scoring exist behind isolated worker boundaries, but
-  semantic generation oracle qualification is not complete; use
+  without recording credentials. `audex_mac/audio_evaluation_worker_pipeline.py`
+  runs the isolated CLAP/AST workers after generation, requires qualified worker
+  results and exact request/result case coverage before ingesting per-case
+  semantic metrics, records `generation/oracle_qualification.json`, and fails
+  closed without recording partial semantic metrics on mismatch. Use
   `--generation-oracles unqualified` to force the previous fail-closed
-  placeholder behavior. Materialization alone does not write a runnable
+  placeholder behavior for the signal oracle path. Materialization alone does
+  not write a runnable
   `generation/openl3-request.json`: the request is valid only after exact
   dataset-specific WAV corpora and reference-statistics paths exist. Supplying
   `--openl3-reference-stats-root` during Standard/Full materialization records
@@ -660,6 +671,17 @@ audex-mac eval-audio-capabilities --tier smoke \
   --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced
 ```
 
+Standard execution adds the isolated semantic worker environment explicitly:
+
+```sh
+audex-mac eval-audio-capabilities --tier standard \
+  --cases-from-run .audex/runs/audio-capabilities/standard-materialized \
+  --model 30b --profile nvfp4 \
+  --xcodec1-path /path/to/hf-audio/xcodec-hubert-general-balanced \
+  --semantic-worker-python /path/to/audio-eval/bin/python \
+  --semantic-worker-device mps
+```
+
 Local evidence on 2026-07-10:
 
 - `smoke-materialize-minimal-20260710`: materialized 20 cases with explicit
@@ -691,10 +713,9 @@ Local evidence on 2026-07-10:
   therefore operational; this four-clip value is a plumbing diagnostic, not a
   paper-comparable model score.
 
-Likely future commands, after semantic oracle qualification exists:
+Likely future command, after full paper-style execution exists:
 
 ```sh
-audex-mac eval-audio-capabilities --tier smoke --model 30b
 audex-mac eval-audio-capabilities --tier full --model 30b --profile bf16
 ```
 

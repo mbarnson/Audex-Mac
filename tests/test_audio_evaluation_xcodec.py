@@ -48,12 +48,14 @@ def test_resolve_xcodec1_config_requires_explicit_or_environment_path(
     ) == XCodec1Config(path=valid, device="cpu", repo_id=XCODEC1_REPO_ID)
 
 
-def test_choose_torch_device_prefers_cuda_then_mps_then_cpu() -> None:
+def test_choose_torch_device_prefers_accelerators_and_requires_explicit_cpu() -> None:
     assert choose_torch_device(_torch(cuda=True, mps=True)) == "cuda"
     assert choose_torch_device(_torch(cuda=False, mps=True)) == "mps"
-    assert choose_torch_device(_torch(cuda=False, mps=False)) == "cpu"
+    with pytest.raises(RuntimeError, match="no accelerator is available"):
+        choose_torch_device(_torch(cuda=False, mps=False))
     assert choose_torch_device(_torch(cuda=False, mps=True), requested="auto") == "mps"
     assert choose_torch_device(_torch(cuda=False, mps=False), requested="mps") == "mps"
+    assert choose_torch_device(_torch(cuda=False, mps=False), requested="cpu") == "cpu"
 
 
 def test_decode_xcodec1_inspection_offsets_interleaved_rvq_codes() -> None:

@@ -302,6 +302,16 @@ class AudioEvaluationRun:
                 json.dumps({"case_id": case_id, **dict(payload)}, sort_keys=True) + "\n"
             )
 
+    def record_generation_aggregate_metrics(self, payload: Mapping[str, Any]) -> None:
+        """Append a corpus-level metric that does not belong to one case."""
+
+        if "case_id" in payload:
+            raise ValueError("aggregate generation metrics must not contain case_id")
+        _reject_credentials(payload)
+        path = self.run_dir / "generation" / "metrics.jsonl"
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(dict(payload), sort_keys=True) + "\n")
+
     def record_oracle_qualification(self, payload: Mapping[str, Any]) -> None:
         _reject_credentials(payload)
         self.oracle_qualification_path.write_text(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -80,29 +80,58 @@ def default_full_openl3_requests(
 ) -> tuple[OpenL3DatasetRequest, ...]:
     """Return the paper-style OpenL3 requests for a completed full run."""
 
-    metric_root = run_dir / "media" / "openl3"
-    return (
-        OpenL3DatasetRequest(
-            dataset="audiocaps",
-            content_type="env",
-            generated_dir=str(metric_root / "audiocaps"),
-            reference_statistics_path=str(
-                reference_stats_root / AUDIOCAPS_REFERENCE_STATS_FILENAME
-            ),
-            reference_statistics_sha256=AUDIOCAPS_REFERENCE_STATS_SHA256,
-            expected_file_count=4_875,
-        ),
-        OpenL3DatasetRequest(
-            dataset="song-describer",
-            content_type="music",
-            generated_dir=str(metric_root / "song-describer"),
-            reference_statistics_path=str(
-                reference_stats_root / SONG_DESCRIBER_REFERENCE_STATS_FILENAME
-            ),
-            reference_statistics_sha256=SONG_DESCRIBER_REFERENCE_STATS_SHA256,
-            expected_file_count=746,
-        ),
+    return build_openl3_requests(
+        run_dir,
+        reference_stats_root=reference_stats_root,
+        corpus_counts={"audiocaps": 4_875, "song-describer": 746},
     )
+
+
+def build_openl3_requests(
+    run_dir: Path,
+    *,
+    reference_stats_root: Path,
+    corpus_counts: Mapping[str, int],
+) -> tuple[OpenL3DatasetRequest, ...]:
+    """Build pinned requests for the exact generated corpora present in a run."""
+
+    definitions = {
+        "audiocaps": (
+            "env",
+            AUDIOCAPS_REFERENCE_STATS_FILENAME,
+            AUDIOCAPS_REFERENCE_STATS_SHA256,
+        ),
+        "song-describer": (
+            "music",
+            SONG_DESCRIBER_REFERENCE_STATS_FILENAME,
+            SONG_DESCRIBER_REFERENCE_STATS_SHA256,
+        ),
+    }
+    unknown = sorted(set(corpus_counts) - set(definitions))
+    if unknown:
+        raise ValueError(f"unsupported OpenL3 corpus: {unknown}")
+    if not corpus_counts:
+        raise ValueError("no supported OpenL3 corpora were staged")
+    metric_root = run_dir / "media" / "openl3"
+    requests: list[OpenL3DatasetRequest] = []
+    for dataset in ("audiocaps", "song-describer"):
+        count = int(corpus_counts.get(dataset, 0))
+        if count <= 0:
+            continue
+        content_type, filename, sha256 = definitions[dataset]
+        requests.append(
+            OpenL3DatasetRequest(
+                dataset=dataset,
+                content_type=content_type,
+                generated_dir=str(metric_root / dataset),
+                reference_statistics_path=str(reference_stats_root / filename),
+                reference_statistics_sha256=sha256,
+                expected_file_count=count,
+            )
+        )
+    if not requests:
+        raise ValueError("no supported OpenL3 corpora were staged")
+    return tuple(requests)
 
 
 def write_openl3_worker_request(

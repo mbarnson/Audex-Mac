@@ -14,6 +14,7 @@ from audex_mac.audio_evaluation_openl3 import (
     STABLE_AUDIO_METRICS_REVISION,
     STABLE_AUDIO_METRICS_SOURCE_SHA256,
     OpenL3DatasetRequest,
+    build_openl3_requests,
     build_openl3_worker_command,
     default_full_openl3_requests,
     load_openl3_worker_result,
@@ -23,6 +24,38 @@ from audex_mac.audio_evaluation_openl3_backend import OfficialOpenL3Backend
 from audex_mac.audio_evaluation_openl3_worker import run_worker
 
 pytestmark = pytest.mark.fast
+
+
+def test_openl3_requests_use_staged_corpus_counts_for_diagnostic_tiers(
+    tmp_path: Path,
+) -> None:
+    requests = build_openl3_requests(
+        tmp_path / "run",
+        reference_stats_root=tmp_path / "stats",
+        corpus_counts={"audiocaps": 64, "song-describer": 64},
+    )
+
+    assert [(request.dataset, request.expected_file_count) for request in requests] == [
+        ("audiocaps", 64),
+        ("song-describer", 64),
+    ]
+    assert requests[0].content_type == "env"
+    assert requests[1].content_type == "music"
+
+
+def test_openl3_requests_reject_unknown_or_empty_corpora(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no supported OpenL3 corpora"):
+        build_openl3_requests(
+            tmp_path / "run",
+            reference_stats_root=tmp_path / "stats",
+            corpus_counts={},
+        )
+    with pytest.raises(ValueError, match="unsupported OpenL3 corpus"):
+        build_openl3_requests(
+            tmp_path / "run",
+            reference_stats_root=tmp_path / "stats",
+            corpus_counts={"unknown": 1},
+        )
 
 
 def test_openl3_worker_request_contract_matches_full_tier_parameters(

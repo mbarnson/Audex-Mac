@@ -387,17 +387,15 @@ def test_audio_evaluation_cli_materializes_standard_manifest(
     assert not (run_dir / "generation" / "openl3-request.json").exists()
 
 
-@pytest.mark.parametrize("tier", ["standard", "full"])
-def test_audio_evaluation_cli_blocks_non_smoke_execution_until_semantic_oracles(
+def test_audio_evaluation_cli_blocks_full_execution_until_paper_metrics(
     tmp_path: Path,
-    tier: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit):
         audio_evaluation_cli.main(
             [
                 "--tier",
-                tier,
+                "full",
                 "--run-root",
                 str(tmp_path / "runs"),
             ],
@@ -410,7 +408,143 @@ def test_audio_evaluation_cli_blocks_non_smoke_execution_until_semantic_oracles(
             ),
         )
 
-    assert f"{tier} execution is blocked" in capsys.readouterr().err
+    assert "full execution is blocked" in capsys.readouterr().err
+
+
+def test_audio_evaluation_cli_executes_standard_from_prepared_cases(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    audio_path = tmp_path / "prepared-audio.wav"
+    _write_silent_wav(audio_path)
+    understanding = AudioEvaluationCase(
+        case_id="sound-prepared",
+        track=EvaluationTrack.UNDERSTANDING,
+        dataset_id="fixture/mmau",
+        dataset_revision="rev1",
+        dataset_config="default",
+        dataset_split="standard",
+        source_row_id="sound-prepared",
+        source_row_hash="hash-sound-prepared",
+        license="fixture",
+        category="sound",
+        prompt="What is heard?",
+        expected_answer="A",
+        audio_path=str(audio_path),
+        choices=("A", "B"),
+        tags=("dataset:mmau",),
+    )
+    generation = AudioEvaluationCase(
+        case_id="control-quantity-01",
+        track=EvaluationTrack.GENERATION,
+        dataset_id="audex-mac/ualm-inspired-controls",
+        dataset_revision="2026-07-10",
+        dataset_config="ualm-inspired",
+        dataset_split="standard",
+        source_row_id="quantity-01",
+        source_row_hash="hash-control-quantity-01",
+        license="local-synthetic-evaluation-prompts",
+        category="structured-control",
+        prompt="Three dogs bark one after another in a small room.",
+        caption="Three dogs bark one after another in a small room.",
+        hard_foil_caption="Rain falls softly.",
+        tags=("control:quantity", "generation:structured-control"),
+    )
+    caption_generation = AudioEvaluationCase(
+        case_id="audiocaps-123",
+        track=EvaluationTrack.GENERATION,
+        dataset_id="d0rj/audiocaps",
+        dataset_revision="rev1",
+        dataset_config="default",
+        dataset_split="standard",
+        source_row_id="123",
+        source_row_hash="hash-audiocaps-123",
+        license="fixture",
+        category="audiocaps",
+        prompt="A dog barks twice.",
+        caption="A dog barks twice.",
+        hard_foil_caption="Rain falls softly.",
+        tags=("generation:caption",),
+    )
+    prepared = AudioEvaluationRun.create(
+        root=tmp_path / "prepared",
+        run_id="standard-prepared",
+        tier="standard",
+        master_seed=20260710,
+        cases=(understanding, generation, caption_generation),
+        manifest_metadata={"model": {"repo_id": "fixture/audex"}},
+    )
+
+    def fake_worker(command: tuple[str, ...]) -> int:
+        request_path = Path(command[command.index("--request") + 1])
+        output_path = Path(command[command.index("--output") + 1])
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        module = command[command.index("-m") + 1]
+        if module.endswith("openl3_worker"):
+            payload = {
+                "schema_version": 2,
+                "status": "PASS",
+                "qualification": {"qualified": True},
+                "fd_openl3_by_dataset": {"audiocaps": 70.0},
+                "per_dataset": [{"dataset": "audiocaps", "fd_openl3": 70.0}],
+            }
+        else:
+            payload = {
+                "schema_version": 1,
+                "status": "PASS",
+                "qualification": {"qualified": True},
+                "per_case": [
+                    {"case_id": item["case_id"]} for item in request["requests"]
+                ],
+            }
+        output_path.write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+        return 0
+
+    exit_code = audio_evaluation_cli.main(
+        [
+            "--tier",
+            "standard",
+            "--cases-from-run",
+            str(prepared.run_dir),
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--run-id",
+            "standard-execute",
+            "--semantic-worker-python",
+            "/opt/audio-eval/bin/python",
+            "--semantic-worker-device",
+            "mps",
+            "--openl3-reference-stats-root",
+            str(tmp_path / "reference-stats"),
+            "--openl3-worker-python",
+            "/opt/openl3/bin/python",
+            "--openl3-implementation-file",
+            "/opt/stable/openl3_fd.py",
+        ],
+        runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
+        decoder_factory=lambda _config: _decode_to_tone_wav,
+        worker_command_runner=fake_worker,
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Verdict: CHARACTERIZED" in output
+    run_dir = tmp_path / "runs" / "standard-execute"
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["verdict"] == "CHARACTERIZED"
+    assert summary["completed_cases"] == 3
+    assert summary["generation"]["completed_cases"] == 2
+    assert set(summary["generation"]["semantic_metrics"]) == {
+        "ast",
+        "clap",
+        "openl3",
+    }
+    assert summary["generation"]["semantic_metrics"]["openl3"] == {
+        "fd_openl3_by_dataset": {"audiocaps": 70.0}
+    }
 
 
 def test_audio_evaluation_cli_materializes_full_manifest(

@@ -50,9 +50,11 @@ from .audio_evaluation_hf import (
     fetch_verified_rows,
 )
 from .audio_evaluation_openl3 import (
+    build_openl3_requests,
     default_full_openl3_requests,
     write_openl3_worker_request,
 )
+from .audio_evaluation_openl3_staging import stage_openl3_corpora
 from .audio_evaluation_oracles import SignalSanityOracleSuite
 from .audio_evaluation_runner import (
     AudioEvaluationRunner,
@@ -68,6 +70,11 @@ from .audio_evaluation_suite import (
     build_full_cases_from_rows,
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
+)
+from .audio_evaluation_worker_pipeline import (
+    CommandRunner,
+    GenerationWorkerConfig,
+    run_generation_worker_pipeline,
 )
 from .audio_evaluation_xcodec import (
     XCodec1Config,
@@ -105,6 +112,7 @@ def main(
     ) = None,
     oracle_suite_factory: Callable[[], OracleSuite] | None = None,
     model_path_resolver: Callable[[str, str], tuple[Path, str]] | None = None,
+    worker_command_runner: CommandRunner | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         description="Prepare or run autonomous Audex audio-capability evaluation"
@@ -154,14 +162,43 @@ def main(
         ),
     )
     parser.add_argument(
+        "--semantic-worker-python",
+        type=Path,
+        default=None,
+        help=(
+            "isolated Python interpreter containing the pinned CLAP/AST worker "
+            "dependencies; required for Standard execution"
+        ),
+    )
+    parser.add_argument(
+        "--semantic-worker-device",
+        choices=("cpu", "mps", "cuda"),
+        default=None,
+        help=(
+            "explicit CLAP/AST worker device; required for Standard execution "
+            "and never selected by fallback"
+        ),
+    )
+    parser.add_argument(
         "--openl3-reference-stats-root",
         type=Path,
         default=None,
         help=(
-            "directory containing pinned full-tier stable-audio-metrics OpenL3 "
-            "reference .npz files; when set for full materialization, "
-            "writes generation/openl3-request.json"
+            "directory containing pinned stable-audio-metrics OpenL3 reference "
+            ".npz files; required for Standard execution"
         ),
+    )
+    parser.add_argument(
+        "--openl3-worker-python",
+        type=Path,
+        default=None,
+        help="isolated Python 3.11 interpreter containing pinned OpenL3 dependencies",
+    )
+    parser.add_argument(
+        "--openl3-implementation-file",
+        type=Path,
+        default=None,
+        help="pinned stable-audio-metrics src/openl3_fd.py implementation file",
     )
     parser.add_argument(
         "--capability-target",
@@ -202,10 +239,24 @@ def main(
     if args.materialize_only and capability_targets:
         parser.error("--capability-target is only valid for execution runs")
     if args.tier in {"standard", "full"} and not args.materialize_only:
-        parser.error(
-            f"{args.tier} execution is blocked until semantic generation oracles "
-            "are implemented; use --materialize-only to prepare the manifest"
-        )
+        if args.semantic_worker_python is None:
+            parser.error(
+                f"{args.tier} execution requires --semantic-worker-python so CLAP "
+                "and AST run in an isolated environment"
+            )
+        if args.semantic_worker_device is None:
+            parser.error(
+                f"{args.tier} execution requires --semantic-worker-device; no "
+                "accelerator or CPU fallback is selected implicitly"
+            )
+        if args.openl3_reference_stats_root is None:
+            parser.error(
+                f"{args.tier} execution requires --openl3-reference-stats-root"
+            )
+        if args.openl3_worker_python is None:
+            parser.error(f"{args.tier} execution requires --openl3-worker-python")
+        if args.openl3_implementation_file is None:
+            parser.error(f"{args.tier} execution requires --openl3-implementation-file")
 
     if args.model == "2b" and args.profile == "nvfp4":
         parser.error("--profile nvfp4 is only defined for --model 30b")
@@ -392,6 +443,42 @@ def main(
         capability_targets=capability_targets,
     )
     _write_completed_generation_worker_requests(run)
+    if args.tier in {"standard", "full"}:
+        assert args.semantic_worker_python is not None
+        assert args.semantic_worker_device is not None
+        assert args.openl3_reference_stats_root is not None
+        assert args.openl3_worker_python is not None
+        assert args.openl3_implementation_file is not None
+        openl3_counts = stage_openl3_corpora(run)
+        if args.tier == "full":
+            _require_full_openl3_corpus_counts(openl3_counts)
+        write_openl3_worker_request(
+            run.run_dir / "generation" / "openl3-request.json",
+            run_id=run.run_dir.name,
+            requests=build_openl3_requests(
+                run.run_dir,
+                reference_stats_root=args.openl3_reference_stats_root,
+                corpus_counts=openl3_counts,
+            ),
+        )
+        worker_result = run_generation_worker_pipeline(
+            run,
+            config=GenerationWorkerConfig(
+                semantic_python=args.semantic_worker_python,
+                semantic_device=args.semantic_worker_device,
+                openl3_python=args.openl3_worker_python,
+                openl3_implementation_file=args.openl3_implementation_file,
+            ),
+            command_runner=worker_command_runner,
+        )
+        summary = run.finalize(
+            required_oracles_qualified=worker_result.qualified,
+            protocol_failures=(
+                *summary.protocol_failures,
+                *worker_result.failures,
+            ),
+            capability_targets=capability_targets,
+        )
     print(f"Audio evaluation run: {run.run_dir}")
     print(f"Cases: {len(cases)}")
     print(f"Summary: {run.summary_path}")
@@ -535,6 +622,18 @@ def _write_openl3_worker_request_if_configured(
             reference_stats_root=reference_stats_root,
         ),
     )
+
+
+def _require_full_openl3_corpus_counts(counts: Mapping[str, int]) -> None:
+    expected = {
+        "audiocaps": AUDIOCAPS_CAPTION_PIN.expected_rows,
+        "song-describer": SONG_DESCRIBER_PIN.expected_rows,
+    }
+    if dict(counts) != expected:
+        raise RuntimeError(
+            "full OpenL3 execution requires exact paper corpora: "
+            f"expected {expected}, got {dict(counts)}"
+        )
 
 
 def _write_completed_generation_worker_requests(run: AudioEvaluationRun) -> None:
