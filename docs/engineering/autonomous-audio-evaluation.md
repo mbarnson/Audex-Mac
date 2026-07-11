@@ -249,8 +249,9 @@ Gate:
 
 Standard needs a named blessed baseline before it can pass or fail regressions.
 Pass `--baseline-name` with the baseline run's `--baseline-summary`; the
-evaluator hashes and records that summary and derives the policy below. Without
-a baseline or explicit targets, return `CHARACTERIZED`.
+evaluator verifies the sibling manifest is the same tier/model and BF16, hashes
+and records both artifacts, and derives the policy below. Without a baseline or
+explicit targets, return `CHARACTERIZED`.
 
 Recommended regression policy after a blessed baseline exists:
 
@@ -570,7 +571,11 @@ Current implementation status:
   `--openl3-worker-python`, and `--openl3-implementation-file` so CLAP, AST,
   and OpenL3 workers run in isolated, fail-loud environments with no device
   fallback. Full execution also verifies the staged OpenL3 corpus counts match
-  the exact paper corpora before running workers. Execution accepts repeated
+  the exact paper corpora before running workers. Standard and Full execution
+  validate the entire case composition before inference, so a reduced outage
+  manifest cannot report 100 percent completeness relative to itself. The Full
+  check pins 333 MMAU sound, 334 MMAU music, 2,000 ESC-50, 4,875 AudioCaps, 746
+  SongDescriber, and 24 structured-control cases. Execution accepts repeated
   `--capability-target NAME=VALUE` arguments for explicit
   `PASS`/`CAPABILITY_FAIL` verdicts. The
   smoke/standard/full manifest/environment records model
@@ -584,8 +589,9 @@ Current implementation status:
   worker results and exact request/result case or dataset coverage before
   ingesting metrics, records `generation/oracle_qualification.json`, and fails
   closed without recording partial semantic metrics on mismatch. Named baseline
-  summaries produce the documented regression targets and are recorded by name,
-  path, and SHA-256. Full BF16 profiles automatically apply the documented
+  summaries produce the documented regression targets and are recorded with
+  the baseline name plus summary/manifest paths and SHA-256 values. Full BF16
+  profiles automatically apply the documented
   paper-reproduction targets; quantized profiles remain `CHARACTERIZED` unless a
   named baseline or explicit targets are supplied. Use
   `--generation-oracles unqualified` to force the previous fail-closed
