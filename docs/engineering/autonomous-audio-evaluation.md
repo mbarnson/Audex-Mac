@@ -1,9 +1,8 @@
 # Autonomous Audex Audio-Capability Evaluation
 
-This document defines a fully autonomous evaluation regimen for Audex-Mac's
-non-speech audio capabilities. It is an engineering design for future tooling;
-it does not change `start.sh`, the interactive speech-to-speech path, or the
-current TTS quality harness.
+This document defines the implemented autonomous evaluation regimen for
+Audex-Mac's non-speech audio capabilities. It does not change `start.sh`, the
+interactive speech-to-speech path, or the current TTS quality harness.
 
 The point is to answer two questions separately:
 
@@ -451,9 +450,9 @@ Current implementation status:
 
 - `audex_mac/audio_evaluation.py` owns case contracts, deterministic seeds,
   constrained-answer scoring, append-only artifacts, summary verdicts, and
-  credential rejection. Generation case manifests can carry deterministic
-  hard-foil captions for future caption-alignment metrics, and cases can carry
-  stable tags/control families for future ablations. Summaries can apply
+  credential rejection. Generation case manifests carry deterministic
+  hard-foil captions for caption-alignment metrics, and cases carry stable
+  tags/control families for ablations. Summaries can apply
   explicit numeric capability targets to return `PASS` or `CAPABILITY_FAIL`;
   without targets they remain `CHARACTERIZED`. Current summaries report
   overall constrained-answer accuracy, invalid response rate,
@@ -477,7 +476,7 @@ Current implementation status:
   selected audio assets into local 16 kHz WAV cache files.
 - `audex_mac/audio_evaluation_suite.py` defines the pinned smoke-suite
   constants, Standard-tier local regression manifest, Full-tier paper-style
-  manifest, the metadata-only AudioCaps audio mirror pin for future reference
+  manifest, the metadata-only AudioCaps audio mirror pin for reference
   metrics, local structured control prompts, and deterministic pre-download
   selection. ESC-50 probes and CLAP calibration use a fixed 50-class map whose
   three negatives stay within the dataset's broad acoustic domain instead of
@@ -600,9 +599,9 @@ Current implementation status:
   generation runs write
   `generation/clap-request.json` using actual generated WAV paths and write
   `generation/ast-request.json` for generated cases with explicit local
-  structured-control AST labels. Broader AST label-map fixtures and a pinned
-  AST calibration corpus remain future work so labels are not inferred from
-  arbitrary captions implicitly. Execution runs can opt into pass/fail verdicts
+  structured-control AST labels. AST scoring intentionally remains limited to
+  hand-authored mappings; labels are never inferred from arbitrary captions.
+  Execution runs can opt into pass/fail verdicts
   with repeatable
   `--capability-target NAME=VALUE` arguments; without explicit targets,
   successful runs remain `CHARACTERIZED`.
