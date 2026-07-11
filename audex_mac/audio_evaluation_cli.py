@@ -70,6 +70,7 @@ from .audio_evaluation_suite import (
     build_full_cases_from_rows,
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
+    validate_execution_case_manifest,
 )
 from .audio_evaluation_targets import (
     BaselineTargetProfile,
@@ -119,6 +120,9 @@ def main(
     oracle_suite_factory: Callable[[], OracleSuite] | None = None,
     model_path_resolver: Callable[[str, str], tuple[Path, str]] | None = None,
     worker_command_runner: CommandRunner | None = None,
+    case_manifest_validator: (
+        Callable[[tuple[AudioEvaluationCase, ...], str], None] | None
+    ) = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         description="Prepare or run autonomous Audex audio-capability evaluation"
@@ -265,6 +269,8 @@ def main(
             baseline = baseline_target_profile(
                 name=str(args.baseline_name),
                 summary_path=args.baseline_summary,
+                expected_tier=args.tier,
+                expected_model=args.model,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(f"invalid named baseline: {exc}")
@@ -382,6 +388,17 @@ def main(
             master_seed=args.master_seed,
             materialize_audio=active_materializer,
         )
+    if not args.materialize_only:
+        active_case_validator = case_manifest_validator or (
+            lambda active_cases, active_tier: validate_execution_case_manifest(
+                active_cases,
+                tier=active_tier,
+            )
+        )
+        try:
+            active_case_validator(cases, args.tier)
+        except ValueError as exc:
+            parser.error(str(exc))
     run_id = args.run_id or time.strftime("audio-eval-%Y%m%d-%H%M%S")
     run = AudioEvaluationRun.create(
         root=args.run_root,

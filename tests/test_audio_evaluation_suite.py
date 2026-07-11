@@ -19,6 +19,7 @@ from audex_mac.audio_evaluation_suite import (
     build_full_cases_from_rows,
     build_smoke_cases_from_rows,
     build_standard_cases_from_rows,
+    validate_execution_case_manifest,
 )
 
 
@@ -274,6 +275,9 @@ def test_standard_suite_selects_regression_manifest_and_control_prompts() -> Non
         "control:no-speech",
         "generation:structured-control",
     }
+    validate_execution_case_manifest(cases, tier="standard")
+    with pytest.raises(ValueError, match="composition mismatch"):
+        validate_execution_case_manifest(cases[:-1], tier="standard")
 
 
 @pytest.mark.fast

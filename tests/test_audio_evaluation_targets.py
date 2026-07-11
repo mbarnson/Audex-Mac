@@ -34,8 +34,22 @@ def test_baseline_target_profile_builds_documented_regression_thresholds(
         ),
         encoding="utf-8",
     )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "tier": "standard",
+                "model": {"size": "30b", "profile": "bf16"},
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    profile = baseline_target_profile(name="30b-bf16-20260710", summary_path=path)
+    profile = baseline_target_profile(
+        name="30b-bf16-20260710",
+        summary_path=path,
+        expected_tier="standard",
+        expected_model="30b",
+    )
 
     assert profile.name == "30b-bf16-20260710"
     assert profile.targets == {
@@ -44,6 +58,7 @@ def test_baseline_target_profile_builds_documented_regression_thresholds(
         "hard_foil_win_rate_min": pytest.approx(0.70),
     }
     assert len(profile.summary_sha256) == 64
+    assert len(profile.manifest_sha256) == 64
 
 
 def test_baseline_target_profile_rejects_invalid_or_incomplete_baseline(
@@ -62,7 +77,50 @@ def test_baseline_target_profile_rejects_invalid_or_incomplete_baseline(
     )
 
     with pytest.raises(ValueError, match="complete protocol-valid run"):
-        baseline_target_profile(name="bad", summary_path=path)
+        baseline_target_profile(
+            name="bad",
+            summary_path=path,
+            expected_tier="standard",
+            expected_model="30b",
+        )
+
+
+def test_baseline_target_profile_rejects_cross_model_or_quantized_baseline(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "summary.json").write_text(
+        json.dumps(
+            {
+                "verdict": "CHARACTERIZED",
+                "case_completeness": 1.0,
+                "protocol_failures": [],
+                "accuracy": 0.8,
+                "generation": {
+                    "completed_cases": 1,
+                    "structurally_valid": 1,
+                    "semantic_metrics": {"clap": {"hard_foil_win_rate": 0.8}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "tier": "standard",
+                "model": {"size": "2b", "profile": "nvfp4"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="match tier/model and use BF16"):
+        baseline_target_profile(
+            name="wrong",
+            summary_path=tmp_path / "summary.json",
+            expected_tier="standard",
+            expected_model="30b",
+        )
 
 
 def test_paper_reproduction_targets_are_model_specific_and_bf16_only() -> None:

@@ -14,6 +14,8 @@ class BaselineTargetProfile:
     name: str
     summary_path: str
     summary_sha256: str
+    manifest_path: str
+    manifest_sha256: str
     targets: dict[str, float]
 
 
@@ -21,6 +23,8 @@ def baseline_target_profile(
     *,
     name: str,
     summary_path: Path,
+    expected_tier: str,
+    expected_model: str,
 ) -> BaselineTargetProfile:
     """Derive the documented Standard regression gates from a blessed summary."""
 
@@ -37,6 +41,21 @@ def baseline_target_profile(
         or payload.get("protocol_failures")
     ):
         raise ValueError("baseline must be a complete protocol-valid run")
+    manifest_path = summary_path.parent / "manifest.json"
+    manifest_raw = manifest_path.read_bytes()
+    manifest = json.loads(manifest_raw)
+    if not isinstance(manifest, dict):
+        raise ValueError("baseline manifest must be a JSON object")
+    model = manifest.get("model")
+    if not isinstance(model, dict):
+        raise ValueError("baseline manifest is missing model identity")
+    identity = (manifest.get("tier"), model.get("size"), model.get("profile"))
+    expected_identity = (expected_tier, expected_model, "bf16")
+    if identity != expected_identity:
+        raise ValueError(
+            "baseline must match tier/model and use BF16: "
+            f"expected {expected_identity}, got {identity}"
+        )
     accuracy = _required_number(payload, "accuracy")
     generation = _required_mapping(payload, "generation")
     completed = _required_number(generation, "completed_cases")
@@ -48,6 +67,8 @@ def baseline_target_profile(
         name=clean_name,
         summary_path=str(summary_path),
         summary_sha256=hashlib.sha256(raw).hexdigest(),
+        manifest_path=str(manifest_path),
+        manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
         targets={
             "accuracy_min": max(0.0, accuracy - 0.02),
             "hard_foil_win_rate_min": max(0.0, hard_foil_win_rate - 0.05),

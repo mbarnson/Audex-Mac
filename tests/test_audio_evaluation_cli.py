@@ -537,6 +537,7 @@ def test_audio_evaluation_cli_executes_standard_from_prepared_cases(
         runtime_factory=lambda model_path, profile: FakeAudioEvalRuntime(),
         decoder_factory=lambda _config: _decode_to_tone_wav,
         worker_command_runner=fake_worker,
+        case_manifest_validator=lambda _cases, _tier: None,
     )
 
     assert exit_code == 0

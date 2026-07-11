@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -67,6 +68,8 @@ STANDARD_MMAU_PER_DOMAIN = 125
 STANDARD_ESC50_CASES = 250
 STANDARD_AUDIOCAPS_CASES = 64
 STANDARD_SONG_DESCRIBER_CASES = 64
+FULL_MMAU_SOUND_CASES = 333
+FULL_MMAU_MUSIC_CASES = 334
 STANDARD_CONTROL_DATASET_ID = "audex-mac/ualm-inspired-controls"
 STANDARD_CONTROL_REVISION = "2026-07-10"
 STANDARD_CONTROL_LICENSE = "local-synthetic-evaluation-prompts"
@@ -102,6 +105,65 @@ STANDARD_CONTROL_PROMPTS = (
     ("trap-03", "Make a kitchen timer beep repeatedly without any narration."),
     ("trap-04", "Produce crowd applause only, with no words or singing."),
 )
+
+
+def validate_execution_case_manifest(
+    cases: tuple[AudioEvaluationCase, ...],
+    *,
+    tier: str,
+) -> None:
+    """Require exact Standard/Full suite composition before model execution."""
+
+    if tier == "smoke":
+        return
+    counts = Counter(_execution_case_cohort(case) for case in cases)
+    expected = {
+        "mmau:sound": (
+            STANDARD_MMAU_PER_DOMAIN if tier == "standard" else FULL_MMAU_SOUND_CASES
+        ),
+        "mmau:music": (
+            STANDARD_MMAU_PER_DOMAIN if tier == "standard" else FULL_MMAU_MUSIC_CASES
+        ),
+        "esc50": (
+            STANDARD_ESC50_CASES if tier == "standard" else ESC50_PIN.expected_rows
+        ),
+        "audiocaps": (
+            STANDARD_AUDIOCAPS_CASES
+            if tier == "standard"
+            else AUDIOCAPS_CAPTION_PIN.expected_rows
+        ),
+        "song-describer": (
+            STANDARD_SONG_DESCRIBER_CASES
+            if tier == "standard"
+            else SONG_DESCRIBER_PIN.expected_rows
+        ),
+        "structured-control": len(STANDARD_CONTROL_PROMPTS),
+    }
+    if tier not in {"standard", "full"}:
+        raise ValueError(f"unsupported execution manifest tier: {tier}")
+    observed = {cohort: int(counts.get(cohort, 0)) for cohort in expected}
+    unexpected = sorted(set(counts) - set(expected))
+    if observed != expected or unexpected:
+        raise ValueError(
+            f"{tier} execution manifest composition mismatch: "
+            f"expected {expected}, got {observed}, unexpected={unexpected}"
+        )
+
+
+def _execution_case_cohort(case: AudioEvaluationCase) -> str:
+    if case.dataset_id == MMAU_PIN.repo_id:
+        return f"mmau:{case.category}"
+    if case.dataset_id == ESC50_PIN.repo_id:
+        return "esc50"
+    if case.dataset_id == AUDIOCAPS_CAPTION_PIN.repo_id:
+        return "audiocaps"
+    if case.dataset_id == SONG_DESCRIBER_PIN.repo_id:
+        return "song-describer"
+    if case.dataset_id == STANDARD_CONTROL_DATASET_ID:
+        return "structured-control"
+    return f"unexpected:{case.dataset_id}"
+
+
 STANDARD_CONTROL_TAGS = {
     "quantity": ("control:quantity", "generation:structured-control"),
     "distance": ("control:distance", "generation:structured-control"),
