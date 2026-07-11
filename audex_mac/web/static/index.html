@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#17152b" />
+    <meta
+      name="description"
+      content="Audex local speech, conversation, understanding, and sound generation studio"
+    />
+    <title>Audex — Local audio intelligence</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <header class="brand-row">
+          <button class="brand" id="sidebar-toggle" aria-label="Toggle conversations">
+            <span class="brand-mark" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i>
+            </span>
+            <span>
+              <strong>Audex</strong>
+              <small>Local audio intelligence</small>
+            </span>
+          </button>
+        </header>
+
+        <button class="new-chat-button" id="new-chat">
+          <span class="plus-icon" aria-hidden="true">+</span>
+          <span>New conversation</span>
+          <kbd>⌘ N</kbd>
+        </button>
+
+        <div class="history-label">
+          <span>Conversations</span>
+          <span id="chat-count">0</span>
+        </div>
+        <nav class="chat-list" id="chat-list" aria-label="Conversation history"></nav>
+
+        <footer class="sidebar-footer">
+          <div class="runtime-state">
+            <span class="status-orbit"><i></i></span>
+            <span>
+              <strong>On-device</strong>
+              <small>Private · Metal accelerated</small>
+            </span>
+          </div>
+        </footer>
+      </aside>
+
+      <main class="conversation-panel">
+        <header class="conversation-header">
+          <button class="mobile-menu" id="mobile-menu" aria-label="Show conversations">
+            <span></span><span></span><span></span>
+          </button>
+          <div class="title-wrap">
+            <span class="active-mode-glyph" id="active-mode-glyph" aria-hidden="true">✦</span>
+            <div>
+              <input
+                class="chat-title"
+                id="chat-title"
+                maxlength="80"
+                aria-label="Conversation title"
+                value="Audex"
+              />
+              <p id="mode-subtitle">Text in, Text out</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <span class="cache-indicator" id="cache-indicator" title="Conversation KV cache is preserved">
+              <i></i><span>Cache warm</span>
+            </span>
+          </div>
+        </header>
+
+        <section class="mode-strip" aria-label="Input and output mode">
+          <div class="mode-strip-heading">
+            <span>Choose a mode</span>
+            <small>Switch any time — your conversation stays intact</small>
+          </div>
+          <div class="mode-dock" id="mode-dock" role="list"></div>
+        </section>
+
+        <section class="message-scroll" id="message-scroll" aria-live="polite">
+          <div class="messages" id="messages"></div>
+          <div class="thinking hidden" id="thinking">
+            <span class="audex-avatar mini" aria-hidden="true">A</span>
+            <span class="typing-bubble"><i></i><i></i><i></i></span>
+            <span id="thinking-label">Audex is thinking</span>
+          </div>
+        </section>
+
+        <section class="composer-zone">
+          <div class="audio-preview hidden" id="audio-preview">
+            <button id="clear-audio" aria-label="Remove selected audio">×</button>
+            <div class="preview-wave" aria-hidden="true"></div>
+            <div>
+              <strong id="audio-name">Audio ready</strong>
+              <small id="audio-duration">Ready to send</small>
+            </div>
+          </div>
+
+          <form class="composer" id="composer">
+            <label class="attach-button tooltip" data-tooltip="Choose an audio file">
+              <input id="audio-file" type="file" accept="audio/*" hidden />
+              <span aria-hidden="true">＋</span>
+            </label>
+            <textarea
+              id="message-input"
+              rows="1"
+              maxlength="12000"
+              placeholder="Message Audex…"
+              aria-label="Message Audex"
+            ></textarea>
+            <button
+              class="record-button tooltip"
+              id="record-button"
+              type="button"
+              data-tooltip="Record speech"
+              aria-label="Record speech"
+            >
+              <span class="mic-icon" aria-hidden="true"></span>
+              <span class="record-time" id="record-time">0:00</span>
+            </button>
+            <button class="send-button" id="send-button" type="submit" aria-label="Send message">
+              <span aria-hidden="true">↑</span>
+            </button>
+          </form>
+          <p class="composer-hint" id="composer-hint">
+            Enter to send · Shift Enter for a new line
+          </p>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="assertive"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
