@@ -37,13 +37,18 @@ def test_web_environment_enables_sound_generation_without_forcing_speech_cfg() -
     assert "AUDEX_VLLM_TTS_CFG" not in env
 
 
-def test_web_environment_respects_explicit_capacity_override() -> None:
+def test_web_environment_overrides_incompatible_tta_engine_values() -> None:
     env = os.environ.copy()
     env["AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"] = "7"
+    env["AUDEX_VLLM_ENABLE_CFG_WIRING"] = "0"
+    env["AUDEX_VLLM_CFG_MAX_MODEL_LEN"] = "5120"
 
     cli._configure_web_environment(env)
 
-    assert env["AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"] == "7"
+    assert env["AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"] == "4"
+    assert env["AUDEX_VLLM_ENABLE_CFG_WIRING"] == "1"
+    assert env["AUDEX_VLLM_CFG_MAX_MODEL_LEN"] == "8192"
+    assert env.get("AUDEX_VLLM_TTS_CFG", "0") != "1"
 
 
 def test_web_environment_promotes_start_sh_empty_capacity_for_sound_cfg() -> None:

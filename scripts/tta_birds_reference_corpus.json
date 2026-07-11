@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "master_seed": 20260711,
+  "cases": [
+    {
+      "case_id": "birds-reference-01",
+      "caption": "Birds chirping in a forest."
+    },
+    {
+      "case_id": "birds-reference-02",
+      "caption": "Birds chirping in a forest."
+    },
+    {
+      "case_id": "birds-reference-03",
+      "caption": "Birds chirping in a forest."
+    },
+    {
+      "case_id": "birds-reference-04",
+      "caption": "Birds chirping in a forest."
+    },
+    {
+      "case_id": "birds-reference-05",
+      "caption": "Birds chirping in a forest."
+    }
+  ]
+}

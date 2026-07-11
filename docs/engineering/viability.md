@@ -716,9 +716,10 @@ The first post-batch owner rerun failed safely during engine startup: the
 headroom guard reported ten 256K non-paged slots requiring 139.86 GB against
 95.08 GB of current Metal headroom. `sound.sh` had selected the CFG3 recipe but
 had not enabled the separate vLLM CFG engine-wiring switch, so the 8K CFG context
-override was never applied. Sound Lab now exports
-`AUDEX_VLLM_ENABLE_CFG_WIRING=1` alongside its recipe, context, and capacity
-settings. The memory guard was correct and remains unchanged.
+override was never applied. Every TTA entry point now forces
+`AUDEX_VLLM_ENABLE_CFG_WIRING=1` alongside the shared context and capacity
+settings before loading the runtime. The memory guard was correct and remains
+unchanged.
 
 The initial board implementation mislabeled a deterministic 16-to-48 kHz sample
 rate/channel conversion as an enhanced WAV. NVIDIA's reported TTA benchmark
@@ -727,6 +728,19 @@ Sound Lab now loads that checkpoint lazily on MPS, resets NVIDIA's default VAE
 seed `0` for each clip, preserves raw 16 kHz WAVs, and serves the learned 48 kHz
 mono reconstruction. A local MPS smoke test successfully enhanced an existing
 ten-second raw Sound Lab WAV.
+
+On 2026-07-11, five BF16 generations of NVIDIA's canonical caption, `Birds
+chirping in a forest.`, used the exact released prompt and were owner-confirmed
+as clear, intended birdsong. This exposed a consequential port divergence:
+Audex-Mac had set the RVQ phase-mask codec cap to 2000, forcing an end at the
+ten-second decode boundary, while NVIDIA sets the cap to 4000, requests at most
+2048 generated tokens, and trims decoding to the first 500 frames. The shared
+TTA recipe now owns the 4000-token cap, CFG3 sampling, two-pair batch width,
+engine wiring, and ten-second decoder policy. `sound.sh`, the standalone Sound
+Lab, the web Sound Lab, quantization comparisons, and autonomous evaluation all
+consume that preset. The audit also fixed autonomous evaluation loading its
+engine without the CFG logits processor and made web startup override an
+inherited disabled CFG-wiring value.
 
 The first controlled BF16-versus-NVFP4 TTA listening corpus completed on
 2026-07-10. It rendered eight identical literal captions and seeds per profile,

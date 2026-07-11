@@ -15,7 +15,10 @@ from .audio_evaluation import (
     derive_case_seed,
     score_constrained_answer,
 )
-from .audio_evaluation_generation import TtaOutputInspection
+from .audio_evaluation_generation import (
+    NVIDIA_TTA_CFG_PAIRS_PER_BATCH,
+    TtaOutputInspection,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,9 +52,10 @@ class UnderstandingAdapter(Protocol):
 
 
 class GenerationAdapter(Protocol):
-    def generate(
-        self, case: AudioEvaluationCase, *, seed: int
-    ) -> GenerationAttempt: ...
+    def generate_many(
+        self,
+        cases: tuple[tuple[AudioEvaluationCase, int], ...],
+    ) -> tuple[GenerationAttempt, ...]: ...
 
 
 class OracleSuite(Protocol):
@@ -120,16 +124,24 @@ class AudioEvaluationRunner:
                 }
             )
         protocol_failures = list(qualification.failures)
+        generation_results = self._generate_in_reference_waves(
+            generation_cases,
+            master_seed=master_seed,
+        )
         for case in run.cases:
             seed = derive_case_seed(master_seed, case.case_id)
             try:
                 if case.track is EvaluationTrack.UNDERSTANDING:
                     self._run_understanding_case(run, case, seed=seed)
                 else:
-                    case_failures = self._run_generation_case(
+                    generation_result = generation_results[case.case_id]
+                    if isinstance(generation_result, Exception):
+                        raise generation_result
+                    case_failures = self._record_generation_case(
                         run,
                         case,
                         seed=seed,
+                        attempt=generation_result,
                         oracles_qualified=qualification.qualified,
                     )
                     protocol_failures.extend(case_failures)
@@ -149,6 +161,33 @@ class AudioEvaluationRunner:
             protocol_failures=tuple(protocol_failures),
             capability_targets=capability_targets,
         )
+
+    def _generate_in_reference_waves(
+        self,
+        cases: tuple[AudioEvaluationCase, ...],
+        *,
+        master_seed: int,
+    ) -> dict[str, GenerationAttempt | Exception]:
+        results: dict[str, GenerationAttempt | Exception] = {}
+        for start in range(0, len(cases), NVIDIA_TTA_CFG_PAIRS_PER_BATCH):
+            wave = cases[start : start + NVIDIA_TTA_CFG_PAIRS_PER_BATCH]
+            seeded = tuple(
+                (case, derive_case_seed(master_seed, case.case_id)) for case in wave
+            )
+            try:
+                attempts = self._generation.generate_many(seeded)
+                if len(attempts) != len(wave):
+                    raise ValueError(
+                        "generation adapter returned "
+                        f"{len(attempts)} attempts for {len(wave)} cases"
+                    )
+            except Exception as exc:
+                for case in wave:
+                    results[case.case_id] = exc
+                continue
+            for case, attempt in zip(wave, attempts, strict=True):
+                results[case.case_id] = attempt
+        return results
 
     def _run_understanding_case(
         self,
@@ -178,15 +217,15 @@ class AudioEvaluationRunner:
             },
         )
 
-    def _run_generation_case(
+    def _record_generation_case(
         self,
         run: AudioEvaluationRun,
         case: AudioEvaluationCase,
         *,
         seed: int,
+        attempt: GenerationAttempt,
         oracles_qualified: bool,
     ) -> tuple[str, ...]:
-        attempt = self._generation.generate(case, seed=seed)
         signal_finite = bool(attempt.signal_metrics.get("finite", False))
         signal_nonempty = bool(attempt.signal_metrics.get("nonempty", False))
         waveform_exists = attempt.raw_wav_path.is_file()

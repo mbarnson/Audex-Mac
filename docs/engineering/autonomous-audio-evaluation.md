@@ -80,6 +80,7 @@ Recommended Audex recipe from NVIDIA's text-to-audio path:
 - temperature `1.0`
 - top_k `80`
 - max_tokens `2048`
+- RVQ phase-mask codec cap `4000` (the generation limit is reached first)
 - fixed target length: 10 seconds
 - XCodec1 generation, then optional enhancement VAE
 
@@ -88,11 +89,13 @@ Generation must use the audio codec path, not the speech codec path:
 - XCodec1 emits 50 frames per second.
 - The first 4 of 8 RVQ layers are generated.
 - Tokens flatten to 200 codec tokens per second.
-- A valid 10-second output has 500 frames and 2000 codec tokens.
+- The decoder consumes the first 500 frames (2000 codec tokens) and trims or
+  pads the waveform to ten seconds. The model may naturally emit a few more
+  phase-valid frames before `<audiogen_end>`.
 - RVQ phases must cycle `0, 1, 2, 3` until `<audiogen_end>`.
 
 Both raw and enhanced outputs should be retained locally. Raw 16 kHz output helps
-debug token/decode failures. Enhanced 48 kHz stereo output is retained as the
+debug token/decode failures. Enhanced 48 kHz mono output is retained as the
 high-bandwidth metric source; the pinned paper-style FD_OpenL3 implementation
 then peak-normalizes and resamples it to 44.1 kHz.
 

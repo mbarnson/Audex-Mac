@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from audex_mac.audio_evaluation_generation import TtaOutputInspection
+from audex_mac.audio_evaluation_generation import (
+    TtaOutputInspection,
+    configure_nvidia_tta_engine_environment,
+)
 from audex_mac.audio_evaluation_runner import GenerationAttempt
 from audex_mac.tta_quality import (
-    configure_nvidia_tta_environment,
     create_blind_quant_listening_set,
     load_tta_quality_corpus,
     render_tta_quality_manifest,
@@ -54,17 +56,25 @@ def test_tta_voice_corpus_covers_distinct_vocal_behaviors() -> None:
 
 
 @pytest.mark.fast
+def test_birds_reference_corpus_repeats_exact_nvidia_caption_across_seeds() -> None:
+    corpus = load_tta_quality_corpus(Path("scripts/tta_birds_reference_corpus.json"))
+
+    assert len(corpus.cases) == 5
+    assert {case.caption for case in corpus.cases} == {"Birds chirping in a forest."}
+
+
+@pytest.mark.fast
 def test_nvidia_tta_environment_pins_reference_batch_and_context() -> None:
     env: dict[str, str] = {}
 
-    configure_nvidia_tta_environment(env)
+    configure_nvidia_tta_engine_environment(env)
 
     assert env == {
-        "AUDEX_VLLM_TTS_CFG": "1",
         "AUDEX_VLLM_ENABLE_CFG_WIRING": "1",
         "AUDEX_VLLM_CFG_MAX_MODEL_LEN": "8192",
         "AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS": "4",
     }
+    assert "AUDEX_VLLM_TTS_CFG" not in env
 
 
 @pytest.mark.fast

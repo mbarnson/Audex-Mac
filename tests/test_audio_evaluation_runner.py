@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,21 @@ class FakeGenerationAdapter:
     def __init__(self, raw_wav_path: Path) -> None:
         self.raw_wav_path = raw_wav_path
         self.calls: list[tuple[str, int]] = []
+        self.batch_sizes: list[int] = []
 
-    def generate(self, case: AudioEvaluationCase, *, seed: int) -> GenerationAttempt:
+    def generate_many(
+        self,
+        cases: tuple[tuple[AudioEvaluationCase, int], ...],
+    ) -> tuple[GenerationAttempt, ...]:
+        self.batch_sizes.append(len(cases))
+        return tuple(self._generate(case, seed=seed) for case, seed in cases)
+
+    def _generate(
+        self,
+        case: AudioEvaluationCase,
+        *,
+        seed: int,
+    ) -> GenerationAttempt:
         self.calls.append((case.case_id, seed))
         return GenerationAttempt(
             raw_wav_path=self.raw_wav_path,
@@ -171,6 +185,37 @@ def test_runner_executes_mixed_smoke_run_and_records_scores(tmp_path: Path) -> N
 
 
 @pytest.mark.fast
+def test_runner_generates_in_nvidia_two_pair_waves(tmp_path: Path) -> None:
+    cases = tuple(
+        replace(
+            _generation_case(),
+            case_id=f"audiocaps-{index}",
+            source_row_id=str(index),
+        )
+        for index in range(3)
+    )
+    run = AudioEvaluationRun.create(
+        root=tmp_path,
+        run_id="two-pair-waves",
+        tier="smoke",
+        master_seed=55,
+        cases=cases,
+        manifest_metadata={},
+    )
+    raw_wav = tmp_path / "raw.wav"
+    raw_wav.write_bytes(b"RIFF-fixture")
+    generation = FakeGenerationAdapter(raw_wav)
+
+    AudioEvaluationRunner(
+        understanding=FakeUnderstandingAdapter(),
+        generation=generation,
+        oracles=FakeOracleSuite(),
+    ).run(run, master_seed=55)
+
+    assert generation.batch_sizes == [2, 1]
+
+
+@pytest.mark.fast
 def test_runner_passes_capability_targets_to_summary(tmp_path: Path) -> None:
     cases = (_understanding_case(),)
     run = AudioEvaluationRun.create(
@@ -208,31 +253,34 @@ def test_runner_marks_structural_failure_as_protocol_failure(tmp_path: Path) -> 
         manifest_metadata={},
     )
     generation = FakeGenerationAdapter(tmp_path / "missing.wav")
-    valid = generation.generate
+    valid = generation.generate_many
 
-    def invalid_generate(
-        selected_case: AudioEvaluationCase, *, seed: int
-    ) -> GenerationAttempt:
-        attempt = valid(selected_case, seed=seed)
-        return GenerationAttempt(
-            raw_wav_path=attempt.raw_wav_path,
-            enhanced_wav_path=None,
-            structure=TtaOutputInspection(
-                codec_ids=(),
-                codec_token_count=0,
-                frame_count=0,
-                duration_seconds=0.0,
-                reached_end_token=False,
-                first_phase_mismatch=None,
-                unexpected_token_ids=(),
-                failures=("missing_end_token", "incomplete_target"),
-            ),
-            signal_metrics={"finite": True, "nonempty": False},
-            elapsed_seconds=1.5,
-            finish_reason="length",
+    def invalid_generate_many(
+        cases: tuple[tuple[AudioEvaluationCase, int], ...],
+    ) -> tuple[GenerationAttempt, ...]:
+        attempts = valid(cases)
+        return tuple(
+            GenerationAttempt(
+                raw_wav_path=attempt.raw_wav_path,
+                enhanced_wav_path=None,
+                structure=TtaOutputInspection(
+                    codec_ids=(),
+                    codec_token_count=0,
+                    frame_count=0,
+                    duration_seconds=0.0,
+                    reached_end_token=False,
+                    first_phase_mismatch=None,
+                    unexpected_token_ids=(),
+                    failures=("missing_end_token", "incomplete_target"),
+                ),
+                signal_metrics={"finite": True, "nonempty": False},
+                elapsed_seconds=1.5,
+                finish_reason="length",
+            )
+            for attempt in attempts
         )
 
-    generation.generate = invalid_generate  # type: ignore[method-assign]
+    generation.generate_many = invalid_generate_many  # type: ignore[method-assign]
     summary = AudioEvaluationRunner(
         understanding=FakeUnderstandingAdapter(),
         generation=generation,
@@ -318,10 +366,11 @@ def test_runner_reports_technical_failure_rate(tmp_path: Path) -> None:
     )
 
     class ExplodingGenerationAdapter:
-        def generate(
-            self, selected_case: AudioEvaluationCase, *, seed: int
-        ) -> GenerationAttempt:
-            del selected_case, seed
+        def generate_many(
+            self,
+            cases: tuple[tuple[AudioEvaluationCase, int], ...],
+        ) -> tuple[GenerationAttempt, ...]:
+            del cases
             raise RuntimeError("decoder exploded")
 
     summary = AudioEvaluationRunner(

@@ -11,7 +11,9 @@ from typing import Any
 
 from .audio_evaluation import AudioEvaluationCase
 from .audio_evaluation_generation import (
+    NVIDIA_TTA_RECIPE,
     TtaOutputInspection,
+    TtaRecipe,
     build_tta_requests,
     inspect_tta_output,
 )
@@ -92,8 +94,8 @@ class AudexVllmTtaGenerationAdapter:
         enhanced_dir: Path | None = None,
         decode_to_wav: Callable[[TtaOutputInspection, Path, AudioEvaluationCase], None],
         enhance_wav: Callable[[Path, Path, AudioEvaluationCase], None] | None = None,
-        allow_early_preview_seconds: float | None = None,
         allow_nvidia_reference_output: bool = False,
+        recipe: TtaRecipe = NVIDIA_TTA_RECIPE,
         run_sync: Callable[[Any], Any] | None = None,
     ) -> None:
         self._runtime = runtime
@@ -101,8 +103,8 @@ class AudexVllmTtaGenerationAdapter:
         self._enhanced_dir = enhanced_dir or (raw_dir.parent / "enhanced")
         self._decode_to_wav = decode_to_wav
         self._enhance_wav = enhance_wav
-        self._allow_early_preview_seconds = allow_early_preview_seconds
         self._allow_nvidia_reference_output = allow_nvidia_reference_output
+        self._recipe = recipe
         self._run_sync = run_sync or _run_async
 
     def generate(
@@ -130,6 +132,7 @@ class AudexVllmTtaGenerationAdapter:
                     caption=caption,
                     case_id=case.case_id,
                     seed=seed,
+                    recipe=self._recipe,
                 )
             )
         results = self._run_sync(self._runtime.generate_many_final(tuple(requests)))
@@ -144,17 +147,12 @@ class AudexVllmTtaGenerationAdapter:
         inspection = inspect_tta_output(
             self._runtime.tokenizer,
             cond_result.token_ids,
+            recipe=self._recipe,
         )
         self._raw_dir.mkdir(parents=True, exist_ok=True)
         raw_wav_path = self._raw_dir / f"{case.case_id}.wav"
         enhanced_wav_path: Path | None = None
         should_decode = inspection.valid or (
-            self._allow_early_preview_seconds is not None
-            and inspection.usable_early_preview(
-                minimum_duration_seconds=self._allow_early_preview_seconds
-            )
-        )
-        should_decode = should_decode or (
             self._allow_nvidia_reference_output
             and inspection.nvidia_reference_decodable
         )
@@ -174,6 +172,29 @@ class AudexVllmTtaGenerationAdapter:
             elapsed_seconds=cond_result.elapsed_seconds,
             finish_reason=cond_result.finish_reason,
         )
+
+
+def build_nvidia_tta_generation_adapter(
+    *,
+    runtime: Any,
+    raw_dir: Path,
+    decode_to_wav: Callable[[TtaOutputInspection, Path, AudioEvaluationCase], None],
+    enhanced_dir: Path | None = None,
+    enhance_wav: Callable[[Path, Path, AudioEvaluationCase], None] | None = None,
+    run_sync: Callable[[Any], Any] | None = None,
+) -> AudexVllmTtaGenerationAdapter:
+    """Build the one supported production TTA adapter preset."""
+
+    return AudexVllmTtaGenerationAdapter(
+        runtime=runtime,
+        raw_dir=raw_dir,
+        enhanced_dir=enhanced_dir,
+        decode_to_wav=decode_to_wav,
+        enhance_wav=enhance_wav,
+        run_sync=run_sync,
+        recipe=NVIDIA_TTA_RECIPE,
+        allow_nvidia_reference_output=True,
+    )
 
 
 def _signal_metrics(path: Path) -> Mapping[str, Any]:

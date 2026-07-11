@@ -13,7 +13,12 @@ from typing import Any
 from ..audio_evaluation import AudioEvaluationCase, EvaluationTrack
 from ..audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
+    build_nvidia_tta_generation_adapter,
     run_sync_model_call,
+)
+from ..audio_evaluation_generation import (
+    NVIDIA_TTA_CFG_PAIRS_PER_BATCH,
+    NVIDIA_TTA_RECIPE,
 )
 from ..vllm_sts_requests import build_text_messages_response_request
 from .session import (
@@ -30,7 +35,6 @@ from .tools import RenderSoundsCall, parse_sound_lab_tool_call
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _PLANNER_MAX_TOKENS = 768
 _DESIGNER_MAX_TOKENS = 1536
-NVIDIA_CFG_PAIRS_PER_BATCH = 2
 _RETRY_SEED_XOR = 0x5A17_D3C9
 
 _RENDER_SOUNDS_TOOL = {
@@ -240,7 +244,7 @@ class AudexTtaSoundGenerator:
         decode_to_wav: Any,
         enhance_wav: Any | None = None,
         adapter_factory: Callable[..., AudexVllmTtaGenerationAdapter] = (
-            AudexVllmTtaGenerationAdapter
+            build_nvidia_tta_generation_adapter
         ),
         run_sync: Callable[[Any], Any] = run_sync_model_call,
     ) -> None:
@@ -256,9 +260,9 @@ class AudexTtaSoundGenerator:
         *,
         output_dir: Path,
     ) -> Iterator[SoundGenerationOutcome]:
-        for start in range(0, len(requests), NVIDIA_CFG_PAIRS_PER_BATCH):
+        for start in range(0, len(requests), NVIDIA_TTA_CFG_PAIRS_PER_BATCH):
             yield from self._generate_wave(
-                requests[start : start + NVIDIA_CFG_PAIRS_PER_BATCH],
+                requests[start : start + NVIDIA_TTA_CFG_PAIRS_PER_BATCH],
                 output_dir=output_dir,
             )
 
@@ -281,7 +285,6 @@ class AudexTtaSoundGenerator:
             enhanced_dir=output_dir / "enhanced",
             decode_to_wav=self._decode_to_wav,
             enhance_wav=self._enhance_wav,
-            allow_nvidia_reference_output=True,
             run_sync=self._run_sync,
         )
         attempts = adapter.generate_many(cases)
@@ -378,7 +381,7 @@ def _sound_lab_success(
         asset_id=request.asset_id,
         generated=GeneratedSound(
             wav_path=wav_path,
-            duration_seconds=10.0,
+            duration_seconds=NVIDIA_TTA_RECIPE.target_seconds,
             elapsed_seconds=elapsed_seconds,
             seed_used=seed_used,
         ),

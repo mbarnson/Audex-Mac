@@ -8,12 +8,16 @@ import os
 import re
 from pathlib import Path
 
-from .audio_evaluation_adapters import AudexVllmTtaGenerationAdapter
+from .audio_evaluation_adapters import build_nvidia_tta_generation_adapter
 from .audio_evaluation_enhancement import (
     NvidiaEnhancementVae,
     enhancement_vae_artifact_identity,
 )
-from .audio_evaluation_xcodec import XCodec1WavDecoder, xcodec1_artifact_identity
+from .audio_evaluation_generation import configure_nvidia_tta_engine_environment
+from .audio_evaluation_xcodec import (
+    build_nvidia_tta_wav_decoder,
+    xcodec1_artifact_identity,
+)
 from .audio_model_resolver import (
     audio_model_repo,
     load_audio_vllm_runtime,
@@ -24,7 +28,6 @@ from .sound_lab.cli import (
     _resolve_or_download_xcodec1,
 )
 from .tta_quality import (
-    configure_nvidia_tta_environment,
     create_blind_quant_listening_set,
     load_tta_quality_corpus,
     render_tta_quality_manifest,
@@ -63,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _render(args: argparse.Namespace) -> int:
-    configure_nvidia_tta_environment(os.environ)
+    configure_nvidia_tta_engine_environment(os.environ)
     model_repo = audio_model_repo("30b", args.profile)
     model_path = args.model_path
     if model_path is None:
@@ -76,17 +79,12 @@ def _render(args: argparse.Namespace) -> int:
     )
     print(f"Audex TTA quality: loading {model_repo}...", flush=True)
     runtime = load_audio_vllm_runtime(model_path, args.profile)
-    generation = AudexVllmTtaGenerationAdapter(
+    generation = build_nvidia_tta_generation_adapter(
         runtime=runtime,
         raw_dir=args.output_dir / "raw",
         enhanced_dir=args.output_dir / "enhanced",
-        decode_to_wav=XCodec1WavDecoder(
-            xcodec,
-            allow_nvidia_reference_output=True,
-            target_seconds=10.0,
-        ),
+        decode_to_wav=build_nvidia_tta_wav_decoder(xcodec),
         enhance_wav=NvidiaEnhancementVae(enhancement),
-        allow_nvidia_reference_output=True,
     )
     model_revision, model_file_hashes = _model_provenance(model_path)
     manifest = render_tta_quality_manifest(

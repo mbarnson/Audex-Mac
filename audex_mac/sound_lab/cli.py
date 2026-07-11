@@ -15,10 +15,14 @@ from ..audio_evaluation_enhancement import (
     enhancement_vae_artifact_identity,
     resolve_enhancement_vae_config,
 )
+from ..audio_evaluation_generation import (
+    configure_nvidia_tta_engine_environment,
+    describe_nvidia_tta_recipe,
+)
 from ..audio_evaluation_xcodec import (
     XCODEC1_REPO_ID,
     XCODEC1_REVISION,
-    XCodec1WavDecoder,
+    build_nvidia_tta_wav_decoder,
     resolve_xcodec1_config,
     xcodec1_artifact_identity,
 )
@@ -28,7 +32,6 @@ from ..audio_model_resolver import (
     resolve_cached_audio_model,
 )
 from ..models import AUDEX_2B_REPO, AUDEX_30B_REPO
-from ..tta_quality import configure_nvidia_tta_environment
 from .adapters import (
     AudexSoundLabPlanner,
     AudexTtaSoundGenerator,
@@ -63,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--profile nvfp4 is only defined for --model 30b")
     if not 0 <= args.board_port <= 65535:
         parser.error("--board-port must be between 0 and 65535")
-    configure_nvidia_tta_environment(os.environ)
+    configure_nvidia_tta_engine_environment(os.environ)
 
     model_repo = audio_model_repo(args.model, args.profile)
     model_path = args.model_path
@@ -85,11 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Audex Sound Lab: loading {model_repo}...", flush=True)
     runtime = load_audio_vllm_runtime(model_path, args.profile)
-    decoder = XCodec1WavDecoder(
-        xcodec_config,
-        allow_nvidia_reference_output=True,
-        target_seconds=10.0,
-    )
+    decoder = build_nvidia_tta_wav_decoder(xcodec_config)
     enhancer = NvidiaEnhancementVae(enhancement_config)
     root = DEFAULT_SOUND_LAB_ROOT.resolve()
     catalog = SoundLabCatalog(root / "catalog.sqlite3")
@@ -110,10 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
         asset_root=root / "assets",
         model_repo=model_repo,
-        recipe=(
-            "nvidia-tta-cfg3+xcodec1@"
-            f"{xcodec1_artifact_identity(xcodec_config.path)}+enhancement-vae@"
-            f"{enhancement_vae_artifact_identity(enhancement_config.root)}"
+        recipe=describe_nvidia_tta_recipe(
+            xcodec_identity=xcodec1_artifact_identity(xcodec_config.path),
+            enhancement_identity=enhancement_vae_artifact_identity(
+                enhancement_config.root
+            ),
         ),
     )
     with board:

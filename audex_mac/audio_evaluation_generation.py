@@ -7,6 +7,7 @@ the seam shared by the evaluator, vLLM adapters, and fast structural tests.
 from __future__ import annotations
 
 import re
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +22,10 @@ XCODEC1_CODEBOOK_SIZE = 1024
 XCODEC1_GENERATED_CODEBOOKS = 4
 XCODEC1_FRAMES_PER_SECOND = 50
 DEFAULT_TTA_TARGET_SECONDS = 10.0
-DEFAULT_TTA_CODEC_TOKENS = 2000
+DEFAULT_TTA_CODEC_TOKENS = 4000
+NVIDIA_TTA_CFG_PAIRS_PER_BATCH = 2
+NVIDIA_TTA_ENGINE_MAX_MODEL_LEN = 8192
+NVIDIA_TTA_RECIPE_ID = "nvidia-tta-cfg3-topk80-temp1-xcodec1-vae-v1"
 _AUDIO_CODEC_RE = re.compile(r"^<audiocodec_(\d+)>$")
 
 
@@ -50,14 +54,51 @@ class TtaRecipe:
             * XCODEC1_FRAMES_PER_SECOND
             * XCODEC1_GENERATED_CODEBOOKS
         )
-        if self.codec_token_cap != expected:
+        if self.codec_token_cap < expected:
             raise ValueError(
-                "codec_token_cap does not match target_seconds at the XCodec1 rate"
+                "codec_token_cap cannot be shorter than the decoded target duration"
             )
-        if self.max_tokens <= self.codec_token_cap:
-            raise ValueError("max_tokens must leave room for <audiogen_end>")
+        if self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
         if self.target_frame_tolerance < 0:
             raise ValueError("target_frame_tolerance must be non-negative")
+
+
+NVIDIA_TTA_RECIPE = TtaRecipe()
+
+
+def configure_nvidia_tta_engine_environment(
+    env: MutableMapping[str, str],
+) -> None:
+    """Force the engine requirements shared by every NVIDIA-reference TTA path.
+
+    TTS recipe selection is deliberately untouched: the browser shares this
+    engine with low-latency conversational speech, while TTA requests carry
+    their own explicit CFG3 sampling plan.
+    """
+
+    env.update(
+        {
+            "AUDEX_VLLM_ENABLE_CFG_WIRING": "1",
+            "AUDEX_VLLM_CFG_MAX_MODEL_LEN": str(NVIDIA_TTA_ENGINE_MAX_MODEL_LEN),
+            "AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS": str(
+                NVIDIA_TTA_CFG_PAIRS_PER_BATCH * 2
+            ),
+        }
+    )
+
+
+def describe_nvidia_tta_recipe(
+    *,
+    xcodec_identity: str,
+    enhancement_identity: str,
+) -> str:
+    """Return one stable catalog label for the canonical recipe artifacts."""
+
+    return (
+        f"{NVIDIA_TTA_RECIPE_ID}@xcodec={xcodec_identity}"
+        f"@enhancement={enhancement_identity}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,20 +118,6 @@ class TtaOutputInspection:
     def valid(self) -> bool:
         return not self.failures
 
-    def usable_early_preview(self, *, minimum_duration_seconds: float) -> bool:
-        """Whether a deliberate early end is safe to decode for creative audition.
-
-        Autonomous evaluation remains strict through ``valid``.  This narrower
-        policy only admits complete RVQ frames followed by the model's explicit
-        end token; malformed or truncated streams remain failures.
-        """
-
-        return (
-            self.failures == ("incomplete_target",)
-            and self.reached_end_token
-            and self.duration_seconds >= minimum_duration_seconds
-        )
-
     @property
     def nvidia_reference_decodable(self) -> bool:
         """Match NVIDIA TTA: decode any nonempty phase-valid codec stream."""
@@ -108,7 +135,7 @@ def build_tta_requests(
 ) -> tuple[VllmGenerationRequest, VllmGenerationRequest]:
     """Build a length-matched conditional/unconditional CFG request pair."""
 
-    recipe = recipe or TtaRecipe()
+    recipe = recipe or NVIDIA_TTA_RECIPE
     caption = caption.strip()
     case_id = case_id.strip()
     if not caption:
@@ -167,7 +194,7 @@ def inspect_tta_output(
 ) -> TtaOutputInspection:
     """Validate and extract one generated XCodec1 token stream."""
 
-    recipe = recipe or TtaRecipe()
+    recipe = recipe or NVIDIA_TTA_RECIPE
     token_maps = _build_codec_token_maps(tokenizer)
     audio_codec: dict[int, int] = token_maps["audio_codec"]
     start_tid = token_maps["start_tid"]
@@ -207,7 +234,7 @@ def inspect_tta_output(
         failures.append("missing_end_token")
     if len(codec_ids) % XCODEC1_GENERATED_CODEBOOKS:
         failures.append("incomplete_rvq_frame")
-    expected_frames = recipe.codec_token_cap // XCODEC1_GENERATED_CODEBOOKS
+    expected_frames = round(recipe.target_seconds * XCODEC1_FRAMES_PER_SECOND)
     frame_count = len(codec_ids) // XCODEC1_GENERATED_CODEBOOKS
     if abs(frame_count - expected_frames) > recipe.target_frame_tolerance:
         failures.append("incomplete_target")

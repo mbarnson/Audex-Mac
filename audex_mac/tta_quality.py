@@ -7,26 +7,17 @@ import random
 import re
 import secrets
 import shutil
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .audio_evaluation import AudioEvaluationCase, EvaluationTrack, derive_case_seed
-
-NVIDIA_TTA_REFERENCE_RECIPE = "nvidia-tta-cfg3-topk80-temp1-xcodec1-vae-v1"
-NVIDIA_CFG_PAIRS_PER_BATCH = 2
-
-
-def configure_nvidia_tta_environment(env: MutableMapping[str, str]) -> None:
-    env.update(
-        {
-            "AUDEX_VLLM_TTS_CFG": "1",
-            "AUDEX_VLLM_ENABLE_CFG_WIRING": "1",
-            "AUDEX_VLLM_CFG_MAX_MODEL_LEN": "8192",
-            "AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS": "4",
-        }
-    )
+from .audio_evaluation_generation import (
+    NVIDIA_TTA_CFG_PAIRS_PER_BATCH,
+    NVIDIA_TTA_ENGINE_MAX_MODEL_LEN,
+    NVIDIA_TTA_RECIPE,
+    NVIDIA_TTA_RECIPE_ID,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +58,6 @@ def load_tta_quality_corpus(path: Path) -> TtaQualityCorpus:
         cases.append(TtaQualityCase(case_id=case_id, caption=caption))
     if len({case.case_id for case in cases}) != len(cases):
         raise ValueError("TTA quality case ids must be unique")
-    if len({case.caption.casefold() for case in cases}) != len(cases):
-        raise ValueError("TTA quality captions must be unique")
     return TtaQualityCorpus(master_seed=master_seed, cases=tuple(cases))
 
 
@@ -109,8 +98,8 @@ def render_tta_quality_manifest(
         )
         for case in corpus.cases
     )
-    for start in range(0, len(seeded_cases), NVIDIA_CFG_PAIRS_PER_BATCH):
-        wave = seeded_cases[start : start + NVIDIA_CFG_PAIRS_PER_BATCH]
+    for start in range(0, len(seeded_cases), NVIDIA_TTA_CFG_PAIRS_PER_BATCH):
+        wave = seeded_cases[start : start + NVIDIA_TTA_CFG_PAIRS_PER_BATCH]
         attempts = generation.generate_many(wave)
         for (case, seed), attempt in zip(wave, attempts, strict=True):
             if not attempt.structure.nvidia_reference_decodable:
@@ -134,7 +123,7 @@ def render_tta_quality_manifest(
                     "wav_path": str(attempt.enhanced_wav_path.resolve()),
                     "frame_count": attempt.structure.frame_count,
                     "codec_duration_seconds": attempt.structure.duration_seconds,
-                    "duration_seconds": 10.0,
+                    "duration_seconds": NVIDIA_TTA_RECIPE.target_seconds,
                     "elapsed_seconds": attempt.elapsed_seconds,
                     "finish_reason": attempt.finish_reason,
                 }
@@ -149,8 +138,8 @@ def render_tta_quality_manifest(
                 "model_repo": model_repo,
                 "model_revision": model_revision,
                 "model_file_hashes": model_file_hashes,
-                "engine_max_model_len": 8192,
-                "recipe": NVIDIA_TTA_REFERENCE_RECIPE,
+                "engine_max_model_len": NVIDIA_TTA_ENGINE_MAX_MODEL_LEN,
+                "recipe": NVIDIA_TTA_RECIPE_ID,
                 "master_seed": corpus.master_seed,
                 "xcodec_identity": xcodec_identity,
                 "enhancement_identity": enhancement_identity,

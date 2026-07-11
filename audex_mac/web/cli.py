@@ -13,7 +13,14 @@ from ..audio_evaluation_enhancement import (
     NvidiaEnhancementVae,
     enhancement_vae_artifact_identity,
 )
-from ..audio_evaluation_xcodec import XCodec1WavDecoder, xcodec1_artifact_identity
+from ..audio_evaluation_generation import (
+    configure_nvidia_tta_engine_environment,
+    describe_nvidia_tta_recipe,
+)
+from ..audio_evaluation_xcodec import (
+    build_nvidia_tta_wav_decoder,
+    xcodec1_artifact_identity,
+)
 from ..audio_runtime import preflight_audio_runtime
 from ..bootstrap import model_download_notice
 from ..conversations import ConversationStore
@@ -241,11 +248,7 @@ def _load_sound_backend(
         model=model_name,
         device=xcodec_device,
     )
-    decoder = XCodec1WavDecoder(
-        xcodec_config,
-        allow_nvidia_reference_output=True,
-        target_seconds=10.0,
-    )
+    decoder = build_nvidia_tta_wav_decoder(xcodec_config)
     enhancer = NvidiaEnhancementVae(enhancement_config)
     catalog = SoundLabCatalog(root / "catalog.sqlite3")
     runner = session.run_model_awaitable
@@ -261,20 +264,18 @@ def _load_sound_backend(
         ),
         asset_root=root / "assets",
         model_repo=model_repo,
-        recipe=(
-            f"nvidia-tta-cfg3-{model_profile}+xcodec1@"
-            f"{xcodec1_artifact_identity(xcodec_config.path)}+enhancement-vae@"
-            f"{enhancement_vae_artifact_identity(enhancement_config.root)}"
+        recipe=describe_nvidia_tta_recipe(
+            xcodec_identity=xcodec1_artifact_identity(xcodec_config.path),
+            enhancement_identity=enhancement_vae_artifact_identity(
+                enhancement_config.root
+            ),
         ),
     )
     return SoundLabWebBackend(session=sound_session, catalog=catalog)
 
 
 def _configure_web_environment(env: MutableMapping[str, str]) -> None:
-    env.setdefault("AUDEX_VLLM_ENABLE_CFG_WIRING", "1")
-    env.setdefault("AUDEX_VLLM_CFG_MAX_MODEL_LEN", "8192")
-    if not env.get("AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"):
-        env["AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"] = "4"
+    configure_nvidia_tta_engine_environment(env)
 
 
 def _model_name(repo_id: str) -> str:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import wave
 from collections.abc import Mapping
@@ -726,7 +727,7 @@ def test_audio_evaluation_cli_executes_smoke_run_with_unqualified_generation_ora
     assert first_generation["structurally_valid"] is True
     assert first_generation["signal_metrics"]["nonempty"] is True
     assert runtime.one_final_calls == 24
-    assert runtime.many_final_calls == 8
+    assert runtime.many_final_calls == 4
 
 
 def test_audio_evaluation_cli_signal_oracle_characterizes_smoke_run(
@@ -1035,6 +1036,7 @@ def test_audio_evaluation_cli_executes_from_materialized_case_run(
 
 def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rows_by_repo = _smoke_rows()
     resolved_paths: list[tuple[str, str]] = []
@@ -1070,7 +1072,19 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
     def fake_runtime_factory(model_path: Path | None, profile: str) -> Any:
         del profile
         runtime_paths.append(model_path)
+        assert os.environ["AUDEX_VLLM_ENABLE_CFG_WIRING"] == "1"
+        assert os.environ["AUDEX_VLLM_CFG_MAX_MODEL_LEN"] == "8192"
+        assert os.environ["AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS"] == "4"
         return FakeAudioEvalRuntime()
+
+    monkeypatch.setenv("AUDEX_VLLM_ENABLE_CFG_WIRING", "0")
+    monkeypatch.setenv("AUDEX_VLLM_CFG_MAX_MODEL_LEN", "5120")
+    monkeypatch.setenv("AUDEX_VLLM_NONPAGED_KV_CAPACITY_SEQS", "7")
+    monkeypatch.setattr(
+        audio_evaluation_cli,
+        "load_audio_vllm_runtime",
+        fake_runtime_factory,
+    )
 
     exit_code = audio_evaluation_cli.main(
         [
@@ -1083,7 +1097,6 @@ def test_audio_evaluation_cli_resolves_cached_model_path_for_execution(
         ],
         fetch_rows=fake_fetch,
         materialize_audio=fake_materialize,
-        runtime_factory=fake_runtime_factory,
         decoder_factory=lambda _config: _decode_to_tone_wav,
         enhancer_factory=lambda _config: _enhance_to_tone_wav,
         model_path_resolver=fake_resolver,
@@ -1227,25 +1240,19 @@ class FakeAudioEvalRuntime:
     ) -> tuple[VllmRequestResult, ...]:
         self.many_final_calls += 1
         end = self.tokenizer.get_vocab()["<audiogen_end>"]
-        return (
+        codec_tokens = tuple(
+            self.tokenizer.codec_token_id(index)
+            for index in _phase_valid_codec_ids(2000)
+        )
+        return tuple(
             VllmRequestResult(
                 text="",
-                token_ids=tuple(
-                    self.tokenizer.codec_token_id(index)
-                    for index in _phase_valid_codec_ids(2000)
-                )
-                + (end,),
+                token_ids=(codec_tokens + (end,)) if index % 2 == 0 else (end,),
                 elapsed_seconds=0.3,
                 finish_reason="stop",
-                request_debug_name=requests[0].debug_name,
-            ),
-            VllmRequestResult(
-                text="",
-                token_ids=(end,),
-                elapsed_seconds=0.3,
-                finish_reason="stop",
-                request_debug_name=requests[1].debug_name,
-            ),
+                request_debug_name=request.debug_name,
+            )
+            for index, request in enumerate(requests)
         )
 
 

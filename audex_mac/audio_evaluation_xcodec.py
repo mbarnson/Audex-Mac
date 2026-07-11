@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from .audio_evaluation_generation import (
+    NVIDIA_TTA_RECIPE,
     XCODEC1_CODEBOOK_SIZE,
+    XCODEC1_FRAMES_PER_SECOND,
     XCODEC1_GENERATED_CODEBOOKS,
     TtaOutputInspection,
 )
@@ -41,16 +43,18 @@ class XCodec1WavDecoder:
         codec_loader: Callable[[XCodec1Config], Any] | None = None,
         torch_module: Any | None = None,
         sample_rate: int = 16_000,
-        allow_early_preview_seconds: float | None = None,
+        max_frames: int = MAX_XCODEC1_FRAMES,
         allow_nvidia_reference_output: bool = False,
         target_seconds: float | None = None,
     ) -> None:
+        if max_frames <= 0:
+            raise ValueError("XCodec1 max_frames must be positive")
         self.config = config
         self._codec_loader = codec_loader or load_xcodec1_model
         self._torch_module = torch_module
         self._codec: Any | None = None
         self.sample_rate = sample_rate
-        self.allow_early_preview_seconds = allow_early_preview_seconds
+        self.max_frames = max_frames
         self.allow_nvidia_reference_output = allow_nvidia_reference_output
         self.target_seconds = target_seconds
 
@@ -66,7 +70,7 @@ class XCodec1WavDecoder:
             inspection,
             torch_module=self._torch_module,
             device=self.config.device,
-            allow_early_preview_seconds=self.allow_early_preview_seconds,
+            max_frames=self.max_frames,
             allow_nvidia_reference_output=self.allow_nvidia_reference_output,
         )
         if self.target_seconds is not None:
@@ -80,6 +84,17 @@ class XCodec1WavDecoder:
         if self._codec is None:
             self._codec = self._codec_loader(self.config)
         return self._codec
+
+
+def build_nvidia_tta_wav_decoder(config: XCodec1Config) -> XCodec1WavDecoder:
+    """Build NVIDIA's XCodec1 decoding policy without caller-owned flags."""
+
+    return XCodec1WavDecoder(
+        config,
+        max_frames=round(NVIDIA_TTA_RECIPE.target_seconds * XCODEC1_FRAMES_PER_SECOND),
+        allow_nvidia_reference_output=True,
+        target_seconds=NVIDIA_TTA_RECIPE.target_seconds,
+    )
 
 
 def resolve_xcodec1_config(
@@ -189,21 +204,15 @@ def decode_xcodec1_inspection(
     *,
     torch_module: Any | None = None,
     device: str = "auto",
-    allow_early_preview_seconds: float | None = None,
+    max_frames: int = MAX_XCODEC1_FRAMES,
     allow_nvidia_reference_output: bool = False,
 ) -> tuple[float, ...]:
     """Decode valid flat interleaved RVQ codec IDs to mono waveform samples."""
 
-    preview_allowed = (
-        allow_early_preview_seconds is not None
-        and inspection.usable_early_preview(
-            minimum_duration_seconds=allow_early_preview_seconds
-        )
-    )
     reference_allowed = (
         allow_nvidia_reference_output and inspection.nvidia_reference_decodable
     )
-    if not inspection.valid and not preview_allowed and not reference_allowed:
+    if not inspection.valid and not reference_allowed:
         raise ValueError(f"cannot decode invalid TTA structure: {inspection.failures}")
     if not inspection.codec_ids:
         raise ValueError("cannot decode empty TTA codec stream")
@@ -221,7 +230,7 @@ def decode_xcodec1_inspection(
     with torch.no_grad():
         codes = torch.tensor(codec_ids, dtype=torch.long, device=resolved_device)
         codes = codes.view(1, num_frames, XCODEC1_GENERATED_CODEBOOKS)[
-            :, :MAX_XCODEC1_FRAMES
+            :, :max_frames
         ].transpose(1, 2)
         layer_offsets = (
             torch.arange(

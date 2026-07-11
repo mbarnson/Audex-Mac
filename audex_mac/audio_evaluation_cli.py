@@ -25,6 +25,7 @@ from .audio_evaluation import (
 from .audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
+    build_nvidia_tta_generation_adapter,
 )
 from .audio_evaluation_ast import (
     AST_REPO_ID,
@@ -46,7 +47,10 @@ from .audio_evaluation_enhancement import (
     EnhancementVaeConfig,
     NvidiaEnhancementVae,
 )
-from .audio_evaluation_generation import TtaRecipe
+from .audio_evaluation_generation import (
+    TtaRecipe,
+    configure_nvidia_tta_engine_environment,
+)
 from .audio_evaluation_hf import (
     DatasetPin,
     HfAudioMaterializer,
@@ -89,7 +93,7 @@ from .audio_evaluation_worker_pipeline import (
 )
 from .audio_evaluation_xcodec import (
     XCodec1Config,
-    XCodec1WavDecoder,
+    build_nvidia_tta_wav_decoder,
     resolve_xcodec1_config,
 )
 from .audio_model_resolver import (
@@ -503,6 +507,8 @@ def main(
         print(f"Cases: {len(cases)}")
         return 0
 
+    if runtime_factory is None:
+        configure_nvidia_tta_engine_environment(os.environ)
     active_runtime_factory = runtime_factory or load_audio_vllm_runtime
     active_oracle_suite_factory = oracle_suite_factory or _oracle_suite_factory(
         args.generation_oracles
@@ -510,11 +516,7 @@ def main(
     runtime = active_runtime_factory(model_path, args.profile)
     if decoder_factory is None:
         assert xcodec_config is not None
-        decoder = XCodec1WavDecoder(
-            xcodec_config,
-            allow_nvidia_reference_output=True,
-            target_seconds=10.0,
-        )
+        decoder = build_nvidia_tta_wav_decoder(xcodec_config)
         assert enhancement_config is not None
         enhancer = NvidiaEnhancementVae(enhancement_config)
     else:
@@ -524,15 +526,19 @@ def main(
             if enhancer_factory is not None
             else None
         )
+    generation_adapter_factory = (
+        build_nvidia_tta_generation_adapter
+        if decoder_factory is None
+        else AudexVllmTtaGenerationAdapter
+    )
     summary = AudioEvaluationRunner(
         understanding=AudexVllmUnderstandingAdapter(runtime=runtime),
-        generation=AudexVllmTtaGenerationAdapter(
+        generation=generation_adapter_factory(
             runtime=runtime,
             raw_dir=run.run_dir / "media" / "raw",
             enhanced_dir=run.run_dir / "media" / "enhanced",
             decode_to_wav=decoder,
             enhance_wav=enhancer,
-            allow_nvidia_reference_output=decoder_factory is None,
         ),
         oracles=active_oracle_suite_factory(),
     ).run(

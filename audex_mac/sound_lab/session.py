@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from ..audio_evaluation_generation import NVIDIA_TTA_RECIPE_ID
 from .catalog import SoundLabCatalog
 from .tools import RenderSoundsCall
 
@@ -124,7 +125,7 @@ class SoundLabSession:
         generator: SoundGenerator,
         asset_root: Path,
         model_repo: str,
-        recipe: str = "nvidia-tta-cfg3-xcodec1",
+        recipe: str = NVIDIA_TTA_RECIPE_ID,
         id_factory: Callable[[str], str] | None = None,
     ) -> None:
         self._catalog = catalog

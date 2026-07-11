@@ -122,29 +122,6 @@ def test_decode_xcodec1_inspection_fails_on_invalid_structure() -> None:
         decode_xcodec1_inspection(FakeCodec(), inspection, torch_module=FakeTorch())
 
 
-def test_decode_xcodec1_inspection_allows_explicit_clean_early_preview() -> None:
-    inspection = TtaOutputInspection(
-        codec_ids=(0, 1025, 2050, 3075),
-        codec_token_count=4,
-        frame_count=100,
-        duration_seconds=2.0,
-        reached_end_token=True,
-        first_phase_mismatch=None,
-        unexpected_token_ids=(),
-        failures=("incomplete_target",),
-    )
-
-    waveform = decode_xcodec1_inspection(
-        FakeCodec(),
-        inspection,
-        torch_module=FakeTorch(),
-        device="mps",
-        allow_early_preview_seconds=1.0,
-    )
-
-    assert waveform == (0.25, -0.25)
-
-
 def test_xcodec1_wav_decoder_writes_pcm16_wav(tmp_path: Path) -> None:
     config = XCodec1Config(path=tmp_path, device="mps")
     inspection = TtaOutputInspection(

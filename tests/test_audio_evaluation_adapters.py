@@ -11,6 +11,7 @@ from audex_mac.audio_evaluation import AudioEvaluationCase, EvaluationTrack
 from audex_mac.audio_evaluation_adapters import (
     AudexVllmTtaGenerationAdapter,
     AudexVllmUnderstandingAdapter,
+    build_nvidia_tta_generation_adapter,
 )
 from audex_mac.audio_evaluation_generation import TtaOutputInspection
 from audex_mac.vllm_runtime import VllmRequestResult
@@ -280,10 +281,11 @@ def test_generation_adapter_submits_multiple_cfg_pairs_as_one_vllm_batch(
 
 
 @pytest.mark.fast
-def test_generation_adapter_decodes_clean_early_end_only_when_enabled(
+def test_nvidia_generation_preset_owns_reference_decode_and_codec_cap(
     tmp_path: Path,
 ) -> None:
     decoded: list[float] = []
+    runtime = FakeEarlyEndRuntime()
 
     def decoder(
         inspection: TtaOutputInspection,
@@ -294,17 +296,16 @@ def test_generation_adapter_decodes_clean_early_end_only_when_enabled(
         decoded.append(inspection.duration_seconds)
         _write_tone_wav(destination)
 
-    attempt = AudexVllmTtaGenerationAdapter(
-        runtime=FakeEarlyEndRuntime(),
+    attempt = build_nvidia_tta_generation_adapter(
+        runtime=runtime,
         raw_dir=tmp_path / "raw",
         decode_to_wav=decoder,
-        allow_early_preview_seconds=1.0,
     ).generate(_generation_case(), seed=456)
 
-    assert attempt.structure.valid is False
+    request = runtime.request_batches[0][0]
+    assert request.sampling.extra_args["tta_rvq"]["codec_cap"] == 4000
     assert attempt.structure.failures == ("incomplete_target",)
     assert decoded == [2.0]
-    assert attempt.signal_metrics["nonempty"] is True
 
 
 @pytest.mark.fast

@@ -6,6 +6,7 @@ import pytest
 
 from audex_mac.audio_evaluation_generation import (
     TtaRecipe,
+    _build_tta_prompt,
     build_tta_requests,
     inspect_tta_output,
 )
@@ -28,6 +29,19 @@ class FakeTokenizer:
 
 
 @pytest.mark.fast
+def test_canonical_birds_prompt_matches_nvidia_release_template_exactly() -> None:
+    assert _build_tta_prompt("Birds chirping in a forest.") == (
+        "<|im_start|>system\n"
+        "You are a helpful and harmless assistant.\n\n"
+        "You are not allowed to use any tools.<|im_end|>\n"
+        "<|im_start|>user\n"
+        "<|text to audio|> Generate audio for this caption. "
+        "Birds chirping in a forest.<|im_end|>\n"
+        "<|im_start|>assistant\n<think></think><audiogen_start>"
+    )
+
+
+@pytest.mark.fast
 def test_build_tta_requests_uses_nvidia_cfg3_recipe_and_phase_mask() -> None:
     tokenizer = FakeTokenizer()
 
@@ -44,6 +58,7 @@ def test_build_tta_requests_uses_nvidia_cfg3_recipe_and_phase_mask() -> None:
         uncond.prompt["prompt_token_ids"]
     )
     assert cond.sampling.max_tokens == 2048
+    assert TtaRecipe().codec_token_cap == 4000
     assert cond.sampling.temperature == 1.0
     assert cond.sampling.top_p == 1.0
     assert cond.sampling.top_k == 80
@@ -63,7 +78,7 @@ def test_build_tta_requests_uses_nvidia_cfg3_recipe_and_phase_mask() -> None:
             ],
             "start_tid": 10,
             "end_tid": 11,
-            "codec_cap": 2000,
+            "codec_cap": 4000,
             "start_in_prompt": True,
         },
     }
@@ -144,7 +159,7 @@ def test_inspect_tta_output_reports_phase_and_truncation_failures() -> None:
 
 
 @pytest.mark.fast
-def test_clean_early_end_is_usable_only_as_an_explicit_preview_policy() -> None:
+def test_clean_early_end_is_nvidia_reference_decodable() -> None:
     tokenizer = FakeTokenizer()
     token_ids = [
         100 + phase * 1024 + frame % 1024 for frame in range(100) for phase in range(4)
@@ -156,6 +171,4 @@ def test_clean_early_end_is_usable_only_as_an_explicit_preview_policy() -> None:
     assert result.valid is False
     assert result.failures == ("incomplete_target",)
     assert result.duration_seconds == 2.0
-    assert result.usable_early_preview(minimum_duration_seconds=1.0) is True
-    assert result.usable_early_preview(minimum_duration_seconds=3.0) is False
     assert result.nvidia_reference_decodable is True

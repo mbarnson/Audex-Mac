@@ -22,9 +22,10 @@ Phase 1 is implemented as a typed vertical slice through `./sound.sh`. It uses a
 single persistent Audex/vLLM Metal runtime for strict tool planning, designed
 variant captions, and continuously batched CFG3 text-to-audio generation. One
 five-way audition is submitted in waves of at most two lockstep CFG pairs,
-matching NVIDIA's documented `cfg-pairs-per-batch=2`. `sound.sh` gives this bounded
-workload an 8K engine context and four non-paged KV slots; those settings are
-scoped to Sound Lab and do not change `start.sh`. The local blind board opens
+matching NVIDIA's documented `cfg-pairs-per-batch=2`. The shared NVIDIA TTA
+engine configuration gives this bounded workload an 8K context and four
+non-paged KV slots; those settings are applied by every TTA entry point and do
+not change conversational TTS sampling. The local blind board opens
 automatically, publishes complete XCodec WAVs, records a winner and note, and
 persists recipes and artifacts under `.audex/sound-lab/`.
 
@@ -51,7 +52,7 @@ catalog memory remain Phases 2 through 4 below. `start.sh` behavior remains
 unchanged.
 
 Local validation on 2026-07-10: `scripts/lint.sh` passed and
-`.venv/bin/python -m pytest -m fast` passed 758 tests with 4 intentionally
+`.venv/bin/python -m pytest -m fast` passed 789 tests with 5 intentionally
 deselected. The loopback board integration used a real ephemeral HTTP server.
 An owner-run Apple Silicon audition produced recognizable dog barks through the
 full CFG3/XCodec path. The continuous-batch and bounded-retry revision still
