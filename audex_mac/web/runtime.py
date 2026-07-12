@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 from ..conversations import Conversation, ConversationStore
 from ..personas import Persona
-from .chat import RuntimeTurn
+from .chat import RuntimeTurn, TurnStream
 from .modes import ChatMode
 
 DEFAULT_AUDIO_UNDERSTANDING_PROMPT = (
@@ -94,6 +94,7 @@ class AudexConversationRuntime:
         mode: ChatMode,
         text: str | None,
         audio_path: Path | None,
+        stream: TurnStream | None = None,
     ) -> RuntimeTurn:
         if mode is ChatMode.TEXT_TEXT:
             result = self.session.run_text_only_turn_from_text(
@@ -104,6 +105,8 @@ class AudexConversationRuntime:
             result = self.session.run_turn_from_text(
                 user_text=_require_text(text, mode),
                 play=False,
+                pcm_chunk_sink=(stream.assistant_pcm if stream is not None else None),
+                text_delta_sink=(stream.assistant_text if stream is not None else None),
             )
             return _conversation_turn(result, output_audio=True)
         if mode is ChatMode.SPEECH_TEXT:
@@ -115,6 +118,8 @@ class AudexConversationRuntime:
             result = self.session.run_turn_from_wav(
                 input_wav_path=_require_audio(audio_path, mode),
                 play=False,
+                pcm_chunk_sink=(stream.assistant_pcm if stream is not None else None),
+                text_delta_sink=(stream.assistant_text if stream is not None else None),
             )
             return _conversation_turn(result, output_audio=True)
         if mode is ChatMode.AUDIO_TEXT:
@@ -204,6 +209,7 @@ class SharedAudexRuntimeFactory:
         mode: ChatMode,
         text: str | None,
         audio_path: Path | None,
+        stream: TurnStream | None = None,
     ) -> RuntimeTurn:
         with self._lock:
             conversation = self._load_or_create_conversation(chat_id)
@@ -226,7 +232,12 @@ class SharedAudexRuntimeFactory:
                 session=self._session,
                 sound_backend=self._sound_backend or _UnavailableSoundBackend(),
             )
-            return runtime.respond(mode=mode, text=text, audio_path=audio_path)
+            return runtime.respond(
+                mode=mode,
+                text=text,
+                audio_path=audio_path,
+                stream=stream,
+            )
 
     def shutdown(self) -> None:
         with self._lock:
@@ -256,12 +267,14 @@ class BoundAudexConversationRuntime:
         mode: ChatMode,
         text: str | None,
         audio_path: Path | None,
+        stream: TurnStream | None = None,
     ) -> RuntimeTurn:
         return self.factory.respond(
             self.chat_id,
             mode=mode,
             text=text,
             audio_path=audio_path,
+            stream=stream,
         )
 
 

@@ -24,8 +24,20 @@ class FakeAudexSession:
         self.calls.append(("text-text", user_text))
         return SimpleNamespace(transcript=user_text, response_text="Written answer")
 
-    def run_turn_from_text(self, *, user_text: str, play: bool):
+    def run_turn_from_text(
+        self,
+        *,
+        user_text: str,
+        play: bool,
+        pcm_chunk_sink=None,
+        text_delta_sink=None,
+    ):
         self.calls.append(("text-speech", (user_text, play)))
+        if text_delta_sink is not None:
+            text_delta_sink("Spoken")
+            text_delta_sink("Spoken answer")
+        if pcm_chunk_sink is not None:
+            pcm_chunk_sink(24_000, b"\x01\x00\xff\xff")
         return SimpleNamespace(
             transcript=user_text,
             response_text="Spoken answer",
@@ -38,7 +50,14 @@ class FakeAudexSession:
             transcript="Spoken question", response_text="Written answer"
         )
 
-    def run_turn_from_wav(self, *, input_wav_path: Path, play: bool):
+    def run_turn_from_wav(
+        self,
+        *,
+        input_wav_path: Path,
+        play: bool,
+        pcm_chunk_sink=None,
+        text_delta_sink=None,
+    ):
         self.calls.append(("speech-speech", (input_wav_path, play)))
         return SimpleNamespace(
             transcript="Spoken question",
@@ -56,6 +75,17 @@ class FakeAudexSession:
                 else "Rain is falling steadily on a metal roof."
             ),
         )
+
+
+class RecordingTurnStream:
+    def __init__(self) -> None:
+        self.events: list[tuple[object, ...]] = []
+
+    def assistant_text(self, text: str) -> None:
+        self.events.append(("text", text))
+
+    def assistant_pcm(self, sample_rate: int, pcm: bytes) -> None:
+        self.events.append(("pcm", sample_rate, pcm))
 
 
 class FakeSoundBackend:
@@ -118,6 +148,31 @@ def test_runtime_routes_four_conversation_modes_without_replacing_session(
     assert speech_speech.output_audio_path == tmp_path / "speech.wav"
     assert speech_speech.transcript == "Spoken question"
     assert all(call[1][1] is False for call in (session.calls[1], session.calls[3]))
+
+
+@pytest.mark.fast
+def test_runtime_streams_text_and_pcm_during_spoken_turn(tmp_path: Path) -> None:
+    session = FakeAudexSession(tmp_path)
+    runtime = AudexConversationRuntime(
+        session=session,
+        sound_backend=FakeSoundBackend(tmp_path),
+    )
+    stream = RecordingTurnStream()
+
+    result = runtime.respond(
+        mode=ChatMode.TEXT_SPEECH,
+        text="Read this",
+        audio_path=None,
+        stream=stream,
+    )
+
+    assert stream.events == [
+        ("text", "Spoken"),
+        ("text", "Spoken answer"),
+        ("pcm", 24_000, b"\x01\x00\xff\xff"),
+    ]
+    assert result.response_text == "Spoken answer"
+    assert result.output_audio_path == tmp_path / "speech.wav"
 
 
 @pytest.mark.fast

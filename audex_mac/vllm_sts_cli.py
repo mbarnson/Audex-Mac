@@ -510,6 +510,8 @@ class VllmSpeechToSpeechSession:
         input_wav_path: Path,
         play: bool = True,
         turn_submitted_at: float | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
         if self.async_runtime is not None and self.runtime is None:
             return self._run_async(
@@ -517,6 +519,8 @@ class VllmSpeechToSpeechSession:
                     input_wav_path=input_wav_path,
                     play=play,
                     turn_submitted_at=turn_submitted_at,
+                    pcm_chunk_sink=pcm_chunk_sink,
+                    text_delta_sink=text_delta_sink,
                 )
             )
 
@@ -556,6 +560,8 @@ class VllmSpeechToSpeechSession:
             **self._text_conversation_state_kwargs(),
         )
         response_text = scrub_spoken_answer(text.text)
+        if text_delta_sink is not None:
+            text_delta_sink(response_text)
         text_mlx_clear_cache_seconds = self._clear_mlx_cache()
         print(f"Audex STS: response text: {response_text}", flush=True)
 
@@ -565,6 +571,7 @@ class VllmSpeechToSpeechSession:
             text=response_text or transcript or "I heard your message.",
             max_tokens=self._speech_max_tokens_for_text(response_text),
             play=play,
+            pcm_chunk_sink=pcm_chunk_sink,
         )
         print(f"Audex STS: speech output ready: {speech.wav_path}", flush=True)
 
@@ -765,6 +772,8 @@ class VllmSpeechToSpeechSession:
         user_text: str,
         play: bool = True,
         turn_submitted_at: float | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
         """Skip ASR and run a typed user turn through text generation and TTS."""
 
@@ -776,6 +785,8 @@ class VllmSpeechToSpeechSession:
                     user_text=user_text,
                     play=play,
                     turn_submitted_at=turn_submitted_at,
+                    pcm_chunk_sink=pcm_chunk_sink,
+                    text_delta_sink=text_delta_sink,
                 )
             )
 
@@ -795,6 +806,8 @@ class VllmSpeechToSpeechSession:
             **self._text_conversation_state_kwargs(),
         )
         response_text = scrub_spoken_answer(text.text)
+        if text_delta_sink is not None:
+            text_delta_sink(response_text)
         text_mlx_clear_cache_seconds = self._clear_mlx_cache()
         print(f"Audex STS: response text: {response_text}", flush=True)
         print("Audex STS: generating speech output with vLLM Metal...", flush=True)
@@ -803,6 +816,7 @@ class VllmSpeechToSpeechSession:
             text=response_text or user_text,
             max_tokens=self._speech_max_tokens_for_text(response_text),
             play=play,
+            pcm_chunk_sink=pcm_chunk_sink,
         )
         return self._finish_typed_turn(
             user_text=user_text,
@@ -827,6 +841,8 @@ class VllmSpeechToSpeechSession:
         user_text: str,
         play: bool,
         turn_submitted_at: float | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
@@ -850,8 +866,12 @@ class VllmSpeechToSpeechSession:
                 pending_messages,
                 fallback_text=user_text,
                 play=play,
+                pcm_chunk_sink=pcm_chunk_sink,
+                text_delta_sink=text_delta_sink,
             )
             response_text = scrub_spoken_answer(text.text)
+            if text_delta_sink is not None:
+                text_delta_sink(response_text)
             text_mlx_clear_cache_seconds = self._clear_mlx_cache()
             print(f"Audex STS: response text: {response_text}", flush=True)
         else:
@@ -875,6 +895,7 @@ class VllmSpeechToSpeechSession:
                 text=response_text or user_text,
                 max_tokens=self._speech_max_tokens_for_text(response_text),
                 play=play,
+                pcm_chunk_sink=pcm_chunk_sink,
             )
         result = self._finish_typed_turn(
             user_text=user_text,
@@ -1031,6 +1052,8 @@ class VllmSpeechToSpeechSession:
         playback_start_gate: _PlaybackStartGate | None = None,
         staged_voice_revision: int | None = None,
         staged_sample_count: int | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> _PreparedSpokenTurn:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
@@ -1043,6 +1066,8 @@ class VllmSpeechToSpeechSession:
                 playback_start_gate=playback_start_gate,
                 staged_voice_revision=staged_voice_revision,
                 staged_sample_count=staged_sample_count,
+                pcm_chunk_sink=pcm_chunk_sink,
+                text_delta_sink=text_delta_sink,
             )
 
         started_at = time.time()
@@ -1087,8 +1112,12 @@ class VllmSpeechToSpeechSession:
                 fallback_text=transcript or "I heard your message.",
                 play=play,
                 playback_start_gate=playback_start_gate,
+                pcm_chunk_sink=pcm_chunk_sink,
+                text_delta_sink=text_delta_sink,
             )
             response_text = scrub_spoken_answer(text.text)
+            if text_delta_sink is not None:
+                text_delta_sink(response_text)
             text_mlx_clear_cache_seconds = self._clear_mlx_cache()
         else:
             text = await self.async_runtime.generate_text_response_from_messages(
@@ -1111,6 +1140,7 @@ class VllmSpeechToSpeechSession:
                 max_tokens=self._speech_max_tokens_for_text(response_text),
                 play=play,
                 playback_start_gate=playback_start_gate,
+                pcm_chunk_sink=pcm_chunk_sink,
             )
         return _PreparedSpokenTurn(
             started_at=started_at,
@@ -1142,6 +1172,8 @@ class VllmSpeechToSpeechSession:
         playback_start_gate: _PlaybackStartGate | None,
         staged_voice_revision: int | None,
         staged_sample_count: int | None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> _PreparedSpokenTurn:
         """Answer audio first, then use Audex ASR while buffered speech plays."""
 
@@ -1198,6 +1230,8 @@ class VllmSpeechToSpeechSession:
                 playback_start_gate=playback_start_gate,
                 generation_finished_event=generation_finished,
                 response_stream=response_stream,
+                pcm_chunk_sink=pcm_chunk_sink,
+                text_delta_sink=text_delta_sink,
             )
             asr_started_at, asr_finished_at, asr, asr_clear_seconds = await asr_task
         except BaseException:
@@ -1386,6 +1420,8 @@ class VllmSpeechToSpeechSession:
         input_wav_path: Path,
         play: bool = True,
         turn_submitted_at: float | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
@@ -1400,6 +1436,8 @@ class VllmSpeechToSpeechSession:
             samples=tuple(input_audio.samples),
             sample_rate=input_audio.sample_rate,
             play=play,
+            pcm_chunk_sink=pcm_chunk_sink,
+            text_delta_sink=text_delta_sink,
         )
 
         result = self._finish_prepared_spoken_turn(
@@ -1420,6 +1458,8 @@ class VllmSpeechToSpeechSession:
         playback_start_gate: _PlaybackStartGate | None = None,
         generation_finished_event: asyncio.Event | None = None,
         response_stream: AsyncIterator[VllmStreamDelta] | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
+        text_delta_sink: Callable[[str], None] | None = None,
     ) -> tuple[VllmRequestResult, SpeechOutputSmokeResult]:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
@@ -1467,6 +1507,8 @@ class VllmSpeechToSpeechSession:
                 last_text_delta_seconds = delta.elapsed_seconds
                 last_text_delta_wall_seconds = delta_wall_seconds
                 clean_text = scrub_spoken_answer(delta.text)
+                if text_delta_sink is not None:
+                    text_delta_sink(clean_text)
                 chunks, emitted_chars = streamed_tts_chunks_from_text(
                     clean_text,
                     emitted_chars,
@@ -1506,6 +1548,7 @@ class VllmSpeechToSpeechSession:
                 text_to_tts_interleaved=True,
                 playback_start_gate=playback_start_gate,
                 generation_finished_event=generation_finished_event,
+                pcm_chunk_sink=pcm_chunk_sink,
             )
         )
         try:
@@ -1602,6 +1645,7 @@ class VllmSpeechToSpeechSession:
         decoder_chunk_frames: int = DEFAULT_VLLM_STREAM_DECODER_CHUNK_FRAMES,
         tts_target_segments: int = DEFAULT_VLLM_TTS_TARGET_SEGMENTS,
         tts_segments: tuple[str, ...] | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
     ) -> SpeechOutputSmokeResult:
         if self.async_runtime is not None:
             return self._run_async(
@@ -1613,6 +1657,7 @@ class VllmSpeechToSpeechSession:
                     decoder_chunk_frames=decoder_chunk_frames,
                     tts_target_segments=tts_target_segments,
                     tts_segments=tts_segments,
+                    pcm_chunk_sink=pcm_chunk_sink,
                 )
             )
 
@@ -1772,6 +1817,7 @@ class VllmSpeechToSpeechSession:
         tts_segments: tuple[str, ...] | None = None,
         playback_start_gate: _PlaybackStartGate | None = None,
         generation_finished_event: asyncio.Event | None = None,
+        pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
     ) -> SpeechOutputSmokeResult:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
@@ -1809,6 +1855,7 @@ class VllmSpeechToSpeechSession:
                 tts_segments=tts_segments,
                 playback_start_gate=playback_start_gate,
                 generation_finished_event=generation_finished_event,
+                pcm_chunk_sink=pcm_chunk_sink,
             )
         )
 

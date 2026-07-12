@@ -21,6 +21,14 @@ class RuntimeTurn:
     assets: tuple[dict[str, Any], ...] = ()
 
 
+class TurnStream(Protocol):
+    """Receive live assistant state while a conversational turn is running."""
+
+    def assistant_text(self, text: str) -> None: ...
+
+    def assistant_pcm(self, sample_rate: int, pcm: bytes) -> None: ...
+
+
 class ConversationRuntime(Protocol):
     def respond(
         self,
@@ -28,6 +36,7 @@ class ConversationRuntime(Protocol):
         mode: ChatMode,
         text: str | None,
         audio_path: Path | None,
+        stream: TurnStream | None = None,
     ) -> RuntimeTurn: ...
 
 
@@ -73,6 +82,7 @@ class ChatCoordinator:
         mode: ChatMode,
         text: str | None = None,
         audio_path: Path | None = None,
+        stream: TurnStream | None = None,
     ) -> ChatTurn:
         normalized = text.strip() if text is not None else None
         if mode.input_kind == "text" and not normalized:
@@ -89,11 +99,14 @@ class ChatCoordinator:
         with self._lock_for(chat_id):
             chat = self.store.load(chat_id)
             runtime = self._runtime_for(chat_id)
-            result = runtime.respond(
-                mode=mode,
-                text=normalized,
-                audio_path=audio_path,
-            )
+            response_args: dict[str, Any] = {
+                "mode": mode,
+                "text": normalized,
+                "audio_path": audio_path,
+            }
+            if stream is not None:
+                response_args["stream"] = stream
+            result = runtime.respond(**response_args)
             now = _now()
             user_id = uuid.uuid4().hex
             assistant_id = uuid.uuid4().hex

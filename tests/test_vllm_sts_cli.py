@@ -2664,6 +2664,51 @@ def test_vllm_sts_session_streams_playback_chunks_when_play_enabled(
     assert run_log["player_enqueue_seconds"] >= 0
 
 
+def test_vllm_sts_session_streams_pcm_to_external_sink_without_device_playback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = make_session(tmp_path, runtime=None, async_runtime=FakeAsyncRuntime())
+    emitted: list[tuple[int, bytes]] = []
+
+    class FakeDecoderSession:
+        def __init__(self, *, weights, config, chunk_frames: int) -> None:
+            self.config = config
+
+        def push(self, frames):
+            if frames == ((0,),):
+                return []
+            return [(self.config.sample_rate, FakeWaveform((0.25, -0.25)))]
+
+        def flush(self):
+            return [(self.config.sample_rate, FakeWaveform((0.0, 0.0)))]
+
+    monkeypatch.setattr(
+        "audex_mac.vllm_sts_cli.AudexSpeechDecoderSession",
+        FakeDecoderSession,
+    )
+
+    result = session.generate_speech_output(
+        text="Stream this response.",
+        max_tokens=2400,
+        play=False,
+        decoder_chunk_frames=2,
+        pcm_chunk_sink=lambda sample_rate, pcm: emitted.append((sample_rate, pcm)),
+    )
+
+    assert emitted == [
+        (
+            session.decoder_config.sample_rate,
+            float_samples_to_pcm16_bytes((0.25, -0.25)),
+        ),
+        (
+            session.decoder_config.sample_rate,
+            float_samples_to_pcm16_bytes((0.0, 0.0)),
+        ),
+    ]
+    assert result.wav_path.is_file()
+
+
 def test_vllm_sts_interleaved_playback_requests_buffered_device_latency(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -140,11 +140,11 @@ ensure_vllm_metal_runtime() {
 
 ensure_vllm_metal_audex_deps() {
   local python_bin="${VLLM_METAL_VENV_DIR}/bin/python"
-  local deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, sounddevice"
+  local deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, sounddevice, websockets"
   local install_target="${ROOT_DIR}"
   local deps_ready=0
   if [[ "${NEEDS_AUDIO_EVAL_DEPS}" == "1" ]]; then
-    deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, scipy, sounddevice, soundfile, torch, transformers"
+    deps_imports="import audex_mac, huggingface_hub, prompt_toolkit, scipy, sounddevice, soundfile, torch, transformers, websockets"
     install_target="${ROOT_DIR}[audio-eval]"
   fi
   mkdir -p "${STATE_DIR}"

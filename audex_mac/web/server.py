@@ -7,6 +7,8 @@ import binascii
 import json
 import mimetypes
 import re
+import socket
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from .chat import ChatCoordinator
+from .chat import ChatCoordinator, ChatTurn, TurnStream
 from .modes import ChatMode, mode_catalog
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -38,9 +40,16 @@ class HttpResponse:
 class AudexWebApplication:
     """Route HTTP requests through the cache-preserving chat interface."""
 
-    def __init__(self, *, coordinator: ChatCoordinator, upload_root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        coordinator: ChatCoordinator,
+        upload_root: Path,
+        live_turn_url: str | None = None,
+    ) -> None:
         self.coordinator = coordinator
         self.upload_root = Path(upload_root)
+        self.live_turn_url = live_turn_url
 
     def dispatch(self, method: str, raw_path: str, body: bytes = b"") -> HttpResponse:
         path = unquote(urlsplit(raw_path).path)
@@ -63,6 +72,7 @@ class AudexWebApplication:
                 200,
                 {
                     "name": "Audex",
+                    "live_turn_url": self.live_turn_url,
                     "modes": mode_catalog(),
                     "chats": [
                         chat.to_dict() for chat in self.coordinator.store.list_chats()
@@ -98,16 +108,7 @@ class AudexWebApplication:
         if match and method == "POST":
             chat_id = match.group(1)
             payload = _payload(body)
-            mode = _mode(payload.get("mode"))
-            audio_path = self._decode_audio(chat_id, payload.get("audio"))
-            turn = self.coordinator.submit(
-                chat_id,
-                mode=mode,
-                text=(
-                    str(payload["text"]) if payload.get("text") is not None else None
-                ),
-                audio_path=audio_path,
-            )
+            turn = self.submit_turn_payload(chat_id, payload)
             return _json_response(201, turn.to_dict())
 
         match = _ASSET_MEDIA_ROUTE.fullmatch(path)
@@ -129,6 +130,23 @@ class AudexWebApplication:
         if method == "GET" and path.startswith("/assets/"):
             return _static_response(path.removeprefix("/assets/"))
         return _error(404, f"Audex route not found: {method} {path}")
+
+    def submit_turn_payload(
+        self,
+        chat_id: str,
+        payload: dict[str, Any],
+        *,
+        stream: TurnStream | None = None,
+    ) -> ChatTurn:
+        mode = _mode(payload.get("mode"))
+        audio_path = self._decode_audio(chat_id, payload.get("audio"))
+        return self.coordinator.submit(
+            chat_id,
+            mode=mode,
+            text=(str(payload["text"]) if payload.get("text") is not None else None),
+            audio_path=audio_path,
+            stream=stream,
+        )
 
     def _decode_audio(self, chat_id: str, raw_audio: object) -> Path | None:
         if raw_audio is None:
@@ -200,7 +218,29 @@ def serve(
             print(f"Audex web: {format % args}", flush=True)
 
     server = ThreadingHTTPServer((host, port), Handler)
-    url = f"http://{host}:{server.server_port}"
+    from websockets.sync.server import serve as websocket_serve
+
+    from .live import LiveTurnHandler
+
+    socket_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    live_socket = socket.create_server((host, 0), family=socket_family)
+    live_port = int(live_socket.getsockname()[1])
+    url_host = f"[{host}]" if ":" in host else host
+    url = f"http://{url_host}:{server.server_port}"
+    application.live_turn_url = f"ws://{url_host}:{live_port}/api/live-turns"
+    live_server = websocket_serve(
+        LiveTurnHandler(application).handle,
+        sock=live_socket,
+        origins=[url],
+        compression=None,
+        max_size=MAX_REQUEST_BYTES * 2,
+    )
+    live_thread = threading.Thread(
+        target=live_server.serve_forever,
+        name="audex-live-turns",
+        daemon=True,
+    )
+    live_thread.start()
     print(f"Audex browser interface: {url}", flush=True)
     if on_ready is not None:
         on_ready(url)
@@ -209,6 +249,8 @@ def serve(
     except KeyboardInterrupt:
         pass
     finally:
+        live_server.shutdown()
+        live_thread.join(timeout=5.0)
         server.server_close()
 
 
@@ -240,7 +282,14 @@ def _error(status: int, message: str) -> HttpResponse:
 
 
 def _static_response(name: str) -> HttpResponse:
-    if name not in {"index.html", "app.css", "app.js", "audio.js"}:
+    if name not in {
+        "index.html",
+        "app.css",
+        "app.js",
+        "audio.js",
+        "streaming-audio.js",
+        "pcm-player-worklet.js",
+    }:
         return _error(404, "Static asset not found.")
     path = STATIC_ROOT / name
     if not path.is_file():

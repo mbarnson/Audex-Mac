@@ -21,8 +21,12 @@ class FakeConversationRuntime:
         mode: ChatMode,
         text: str | None,
         audio_path: Path | None,
+        stream=None,
     ) -> RuntimeTurn:
         self.calls.append((mode, text, audio_path))
+        if stream is not None and mode.output_kind == "speech":
+            stream.assistant_text("Audex response")
+            stream.assistant_pcm(24_000, b"\x01\x00")
         transcript = text or f"Transcript of {audio_path.name}"
         return RuntimeTurn(
             transcript=transcript,
@@ -43,6 +47,17 @@ class FakeRuntimeFactory:
         runtime = FakeConversationRuntime(chat_id)
         self.created.append(runtime)
         return runtime
+
+
+class RecordingTurnStream:
+    def __init__(self) -> None:
+        self.events: list[tuple[object, ...]] = []
+
+    def assistant_text(self, text: str) -> None:
+        self.events.append(("text", text))
+
+    def assistant_pcm(self, sample_rate: int, pcm: bytes) -> None:
+        self.events.append(("pcm", sample_rate, pcm))
 
 
 @pytest.mark.fast
@@ -100,6 +115,33 @@ def test_conversational_mode_switches_reuse_one_runtime_and_keep_transcripts(
         "Transcript of spoken.wav",
         "Now answer silently",
     ]
+
+
+@pytest.mark.fast
+def test_streamed_turn_persists_the_same_completed_chat_messages(
+    tmp_path: Path,
+) -> None:
+    store = WebChatStore(tmp_path / "web-chats")
+    coordinator = ChatCoordinator(store=store, runtime_factory=FakeRuntimeFactory())
+    chat = coordinator.create_chat()
+    stream = RecordingTurnStream()
+
+    turn = coordinator.submit(
+        chat.chat_id,
+        mode=ChatMode.TEXT_SPEECH,
+        text="Say this",
+        stream=stream,
+    )
+
+    assert stream.events == [
+        ("text", "Audex response"),
+        ("pcm", 24_000, b"\x01\x00"),
+    ]
+    assert [message.transcript for message in turn.chat.messages] == [
+        "Say this",
+        "Audex response 1",
+    ]
+    assert store.load(chat.chat_id).messages[-1].audio_url == turn.assistant.audio_url
 
 
 @pytest.mark.fast

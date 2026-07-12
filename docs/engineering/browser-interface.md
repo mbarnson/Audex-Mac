@@ -1,10 +1,11 @@
 # Audex Browser Interface
 
 `./start.sh web` launches a loopback-only browser application over the same
-Audex/vLLM Metal runtime used by the CLI. The UI is dependency-free HTML, CSS,
-and JavaScript served by Python's standard-library HTTP server.
+Audex/vLLM Metal runtime used by the CLI. The UI is plain HTML, CSS, and
+JavaScript served by Python's standard-library HTTP server. A focused
+`websockets` loopback server carries live spoken responses.
 
-The approved design for replacing completed-WAV playback with automatic
+The implemented design that replaces completed-WAV playback with automatic
 incremental speech is documented in
 [Browser Low-Latency Speech Streaming](browser-low-latency-streaming.md).
 
@@ -35,9 +36,17 @@ load another model. Requests are serialized around that shared mutable session.
 
 The browser captures microphone samples with Web Audio, downmixes and resamples
 them to 16 kHz mono, and encodes PCM16 WAV. Selected audio files go through the
-same local conversion. The JSON transport uses base64 because the server has no
-third-party multipart dependency. The server rejects non-RIFF/WAVE uploads and
-limits request size to 64 MB.
+same local conversion. Input audio uses base64 JSON because the server has no
+multipart dependency. The server rejects non-RIFF/WAVE uploads and limits
+request size to 64 MB.
+
+Spoken model output takes a different low-latency path. Ordered JSON lifecycle
+events and binary mono PCM16 frames travel over a per-turn WebSocket. A
+long-lived browser `AudioContext` and `AudioWorklet` resample and buffer those
+frames, then start playback automatically after an 80 ms prebuffer. Text deltas
+update the visible assistant transcript while that audio is still being
+generated. The completed WAV is persisted and exposed through the existing
+chat-scoped media route for later replay; it is not the live transport.
 
 Input recordings, spoken replies, and generated sounds are exposed only through
 chat-scoped media URLs. The server resolves those URLs against persisted message

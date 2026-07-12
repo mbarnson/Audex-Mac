@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved design. Implementation pending.
+Implemented on 2026-07-11. Local hardware listening remains part of release UAT.
 
 This design makes the browser's spoken-output modes behave like the terminal
 conversation launched by `./start.sh`: the user finishes an utterance or submits
@@ -35,18 +35,19 @@ mechanism.
 Selecting a speech-output mode therefore means that Audex speaks automatically.
 Mute is a persistent conversation preference; Play is a historical replay action.
 
-## Current Gap
+## Replaced Path
 
-The browser currently records an entire WAV, base64-encodes it into one JSON
-request, waits for the synchronous turn to finish, and renders the resulting
-`audio_url` with native `<audio controls>`. The web runtime also invokes spoken
-turns with `play=False`. Consequently, the browser receives no audio until the
+The original browser path recorded an entire WAV, base64-encoded it into one JSON
+request, waited for the synchronous turn to finish, and rendered the resulting
+`audio_url` with native `<audio controls>`. The web runtime also invoked spoken
+turns with `play=False`. Consequently, the browser received no audio until the
 model response, speech generation, decoder flush, artifact write, conversation
-commit, and HTTP response have all completed.
+commit, and HTTP response had all completed.
 
-Adding `autoplay` to the final `<audio>` element would remove one click but would
-not reduce time to first audible speech. The browser must consume the same
-incremental PCM stream used by the terminal playback path.
+Adding `autoplay` to the final `<audio>` element would have removed one click but
+would not have reduced time to first audible speech. The implemented browser path
+instead consumes the same incremental PCM stream used by the terminal playback
+path.
 
 ## Architecture
 
@@ -96,11 +97,11 @@ turn.failed
 ```
 
 Control events are JSON. PCM is sent as binary WebSocket messages with the turn
-ID, monotonically increasing sequence number, sample rate, channel count, and
-sample format established by `assistant.audio.started`. The first implementation
-uses mono signed PCM16 because the decoder already produces it and the connection
-is loopback-only. It avoids base64 overhead and avoids introducing a lossy codec
-into the model-output path.
+ID and monotonically increasing sequence number in each frame; sample rate,
+channel count, and sample format are established by `assistant.audio.started`.
+The implementation uses mono signed PCM16 because the decoder already produces
+it and the connection is loopback-only. It avoids base64 overhead and avoids
+introducing a lossy codec into the model-output path.
 
 `turn.finished` contains the durable message representation and final replay URL.
 It is not a prerequisite for playback. Event ordering guarantees are:
@@ -158,8 +159,8 @@ low-latency output. The browser should begin with the same 80 ms target, measure
 underruns on real hardware, and tune from evidence rather than increasing the
 buffer preemptively.
 
-Native `<audio>` controls remain available only as a compact replay surface after
-the final artifact exists. They are not mounted as the live player.
+The durable WAV remains available as a replay surface after the final artifact
+exists. It is not mounted as the live player.
 
 ## Visible Turn States
 
@@ -176,7 +177,7 @@ visible transcript in place. Speaking shows a lightweight animated waveform and
 a Stop action rather than a native audio timeline. Completion replaces that live
 indicator with the compact replay control.
 
-The first release retains push-to-talk input. An opt-in hands-free conversation
+This release retains push-to-talk input. An opt-in hands-free conversation
 loop, microphone endpointing, and barge-in require additional cancellation and
 echo-handling contracts; they can build on the same WebSocket and playback
 Adapter without changing the basic streaming-turn Interface.
@@ -215,6 +216,6 @@ without loading model weights.
 3. Add Speech in/Speech out through the same live-turn Interface while retaining
    push-to-talk capture.
 4. Harden disconnects, cancellation, stale-frame rejection, metrics, and replay
-   persistence.
+   persistence. Disconnect-driven cancellation and richer playback metrics remain
+   follow-up hardening work.
 5. Evaluate hands-free re-arming and barge-in as a separate interaction change.
-

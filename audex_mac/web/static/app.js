@@ -10,6 +10,11 @@ const state = {
   recorder: null,
   recordTimer: null,
   recordingEpoch: 0,
+  liveTurnUrl: null,
+  liveClient: null,
+  streamPlayer: null,
+  liveUserMessageId: null,
+  liveAssistantMessageId: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -83,6 +88,7 @@ async function bootstrap() {
     const payload = await api("/api/bootstrap");
     state.modes = payload.modes;
     state.chats = payload.chats;
+    configureLiveTurns(payload.live_turn_url);
     renderModeDock();
     if (state.chats.length === 0) {
       await createChat();
@@ -279,7 +285,7 @@ function updateComposer() {
   elements.hint.textContent = mode.input_kind === "text"
     ? "Enter to send · Shift Enter for a new line"
     : mode.input_kind === "speech"
-      ? "Tap the microphone, speak, then tap again to send"
+      ? "Tap the microphone or press Enter, speak, then press Enter to send"
       : "Choose a file or record audio; the written prompt is optional";
   updateSendState();
 }
@@ -301,6 +307,8 @@ async function submitTurn(event) {
     toast("Record or choose an audio file first.");
     return;
   }
+  const liveSpeech = mode.output_kind === "speech" && state.liveClient;
+  if (liveSpeech) void state.streamPlayer.prime();
   setBusy(true);
   const optimistic = {
     message_id: `pending-${Date.now()}`,
@@ -312,6 +320,20 @@ async function submitTurn(event) {
     assets: [],
   };
   state.chat.messages.push(optimistic);
+  const optimisticAssistant = liveSpeech ? {
+    message_id: `pending-assistant-${Date.now()}`,
+    role: "assistant",
+    transcript: "Audex is preparing to speak…",
+    mode: state.mode,
+    created_at: new Date().toISOString(),
+    audio_url: null,
+    assets: [],
+  } : null;
+  if (optimisticAssistant) {
+    state.liveUserMessageId = optimistic.message_id;
+    state.liveAssistantMessageId = optimisticAssistant.message_id;
+    state.chat.messages.push(optimisticAssistant);
+  }
   renderMessages();
   elements.thinkingLabel.textContent = mode.output_kind === "audio" ? "Audex is shaping sound" : "Audex is thinking";
   elements.thinking.classList.remove("hidden");
@@ -322,10 +344,12 @@ async function submitTurn(event) {
     if (mode.input_kind !== "text") {
       request.audio = { name: state.audio.name, base64: await blobToBase64(state.audio.blob) };
     }
-    const payload = await api(`/api/chats/${state.chat.id}/turns`, {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
+    const payload = liveSpeech
+      ? await state.liveClient.run({ chat_id: state.chat.id, ...request })
+      : await api(`/api/chats/${state.chat.id}/turns`, {
+        method: "POST",
+        body: JSON.stringify(request),
+      });
     state.chat = payload.chat;
     upsertChat(payload.chat);
     elements.input.value = "";
@@ -333,13 +357,62 @@ async function submitTurn(event) {
     clearAudio();
     renderAll();
   } catch (error) {
-    state.chat.messages = state.chat.messages.filter((message) => message.message_id !== optimistic.message_id);
+    state.chat.messages = state.chat.messages.filter((message) => ![
+      optimistic.message_id,
+      optimisticAssistant?.message_id,
+    ].includes(message.message_id));
     renderMessages();
     toast(error.message);
   } finally {
-    elements.thinking.classList.add("hidden");
-    setBusy(false);
+    state.liveUserMessageId = null;
+    state.liveAssistantMessageId = null;
+    if (!liveSpeech || !state.streamPlayer.isActive()) {
+      elements.thinking.classList.add("hidden");
+      setBusy(false);
+    }
     scrollToBottom();
+  }
+}
+
+function configureLiveTurns(url) {
+  state.liveTurnUrl = url || null;
+  if (!state.liveTurnUrl || typeof AudexStreamPlayer === "undefined") return;
+  state.streamPlayer = new AudexStreamPlayer({
+    onState: (playbackState) => {
+      if (playbackState === "playing") {
+        elements.thinkingLabel.textContent = "Audex is speaking";
+        elements.thinking.classList.remove("hidden");
+      } else if (playbackState === "drained") {
+        elements.thinking.classList.add("hidden");
+        setBusy(false);
+      }
+    },
+    onDiagnostic: (diagnostic) => console.warn(`Audex playback: ${diagnostic}`),
+  });
+  state.liveClient = new AudexLiveTurnClient({
+    url: state.liveTurnUrl,
+    player: state.streamPlayer,
+    onEvent: handleLiveTurnEvent,
+  });
+}
+
+function handleLiveTurnEvent(event) {
+  if (event.type === "assistant.text.delta") {
+    const message = state.chat?.messages.find((item) => item.message_id === state.liveAssistantMessageId);
+    if (message) {
+      message.transcript = event.text || "Audex is speaking…";
+      renderMessages();
+      scrollToBottom();
+    }
+  } else if (event.type === "user.transcript.final") {
+    const message = state.chat?.messages.find((item) => item.message_id === state.liveUserMessageId);
+    if (message) {
+      message.transcript = event.text;
+      renderMessages();
+      scrollToBottom();
+    }
+  } else if (event.type === "assistant.audio.started") {
+    elements.thinkingLabel.textContent = "Audex is buffering speech";
   }
 }
 
@@ -430,6 +503,7 @@ async function toggleRecording() {
     return;
   }
   const requestEpoch = ++state.recordingEpoch;
+  if (currentMode().output_kind === "speech") void state.streamPlayer?.prime();
   try {
     const recorder = await createWavRecorder();
     if (requestEpoch !== state.recordingEpoch) {
@@ -597,6 +671,19 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && elements.sidebar.classList.contains("open")) {
     event.preventDefault();
     setSidebarOpen(false, { restoreFocus: true });
+    return;
+  }
+  if (
+    event.key === "Enter"
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.altKey
+    && !state.busy
+    && currentMode()?.input_kind === "speech"
+    && !["INPUT", "TEXTAREA", "BUTTON"].includes(document.activeElement?.tagName)
+  ) {
+    event.preventDefault();
+    void toggleRecording();
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {

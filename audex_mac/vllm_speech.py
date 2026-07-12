@@ -9,7 +9,7 @@ import os
 import time
 import wave
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +88,7 @@ class SpeechSynthesisRequest:
     tts_segments: tuple[str, ...] | None = None
     playback_start_gate: _PlaybackStartGate | None = None
     generation_finished_event: asyncio.Event | None = None
+    pcm_chunk_sink: Callable[[int, bytes], None] | None = None
 
 
 async def _static_async_iter(chunks: tuple[str, ...]) -> AsyncIterator[str]:
@@ -328,6 +329,7 @@ class VllmSpeechSynthesizer:
         tts_segments = request.tts_segments
         playback_start_gate = request.playback_start_gate
         generation_finished_event = request.generation_finished_event
+        pcm_chunk_sink = request.pcm_chunk_sink
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
 
@@ -482,6 +484,8 @@ class VllmSpeechSynthesizer:
             wav_write_started = time.time()
             wav_stream.writeframesraw(pcm)
             wav_write_seconds += time.time() - wav_write_started
+            if pcm_chunk_sink is not None:
+                pcm_chunk_sink(self.decoder_config.sample_rate, pcm)
             if player is not None:
                 enqueue_started = time.time()
                 player.enqueue_pcm(pcm)

@@ -60,6 +60,7 @@ def test_http_application_drives_chat_lifecycle_and_returns_bootstrap_state(
     application = AudexWebApplication(
         coordinator=coordinator,
         upload_root=tmp_path / "uploads",
+        live_turn_url="ws://127.0.0.1:8766/api/live-turns",
     )
 
     created = application.dispatch("POST", "/api/chats", b"{}")
@@ -84,6 +85,7 @@ def test_http_application_drives_chat_lifecycle_and_returns_bootstrap_state(
     )
     assert _json(bootstrap)["chats"][0]["title"] == "Birdsong ideas"
     assert len(_json(bootstrap)["modes"]) == 7
+    assert _json(bootstrap)["live_turn_url"] == ("ws://127.0.0.1:8766/api/live-turns")
 
     media = application.dispatch(
         "GET",
