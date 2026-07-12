@@ -41,6 +41,11 @@ audex-mac = "audex_mac.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# pytest-bdd 8.1 pins gherkin-official below 30.0.4, where this Python 3.13
+# keyword-only fix landed. Remove the filter after pytest-bdd relaxes that pin.
+filterwarnings = [
+  "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin\\.gherkin_line",
+]
 markers = [
   "fast: tests that do not require model weights, network, or audio hardware",
   "slow: tests that may take substantial time",
