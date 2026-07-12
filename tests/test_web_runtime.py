@@ -55,10 +55,13 @@ class FakeAudexSession:
         *,
         input_wav_path: Path,
         play: bool,
+        direct_audio_response=None,
         pcm_chunk_sink=None,
         text_delta_sink=None,
     ):
-        self.calls.append(("speech-speech", (input_wav_path, play)))
+        self.calls.append(
+            ("speech-speech", (input_wav_path, play, direct_audio_response))
+        )
         return SimpleNamespace(
             transcript="Spoken question",
             response_text="Spoken answer",
@@ -148,6 +151,7 @@ def test_runtime_routes_four_conversation_modes_without_replacing_session(
     assert speech_speech.output_audio_path == tmp_path / "speech.wav"
     assert speech_speech.transcript == "Spoken question"
     assert all(call[1][1] is False for call in (session.calls[1], session.calls[3]))
+    assert session.calls[3][1][2] is False
 
 
 @pytest.mark.fast

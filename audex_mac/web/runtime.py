@@ -118,6 +118,7 @@ class AudexConversationRuntime:
             result = self.session.run_turn_from_wav(
                 input_wav_path=_require_audio(audio_path, mode),
                 play=False,
+                direct_audio_response=False,
                 pcm_chunk_sink=(stream.assistant_pcm if stream is not None else None),
                 text_delta_sink=(stream.assistant_text if stream is not None else None),
             )

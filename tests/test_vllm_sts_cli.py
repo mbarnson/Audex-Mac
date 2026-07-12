@@ -1239,6 +1239,49 @@ def test_direct_audio_response_defers_audex_asr_until_tts_generation_finishes(
     assert run_log["timings"]["asr_wall_seconds"] >= 0
 
 
+def test_direct_audio_response_can_be_disabled_per_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_wav = tmp_path / "input.wav"
+    write_pcm16_wav(input_wav, [0.0, 0.25, -0.25], sample_rate=16_000)
+    runtime = FakeAsyncRuntime()
+    session = make_session(tmp_path, runtime=None, async_runtime=runtime)
+
+    class FakeDecoderSession:
+        def __init__(self, *, weights, config, chunk_frames: int) -> None:
+            self.config = config
+
+        def push(self, frames):
+            return [(self.config.sample_rate, FakeWaveform((0.1, -0.1)))]
+
+        def flush(self):
+            return [(self.config.sample_rate, FakeWaveform((0.0, 0.0)))]
+
+    monkeypatch.setenv("AUDEX_VLLM_DIRECT_AUDIO_RESPONSE", "1")
+    monkeypatch.setattr(
+        "audex_mac.vllm_sts_cli.AudexSpeechDecoderSession",
+        FakeDecoderSession,
+    )
+
+    result = session.run_turn_from_wav(
+        input_wav_path=input_wav,
+        play=False,
+        direct_audio_response=False,
+    )
+
+    assert result.transcript == "hello"
+    assert result.response_text == "Hi back."
+    assert [call[0] for call in runtime.calls] == [
+        "asr",
+        "text-stream",
+        "tts-stream",
+        "audio-history-prime",
+    ]
+    run_log = json.loads(result.run_log_path.read_text(encoding="utf-8"))
+    assert run_log["response_source"] == "transcript"
+
+
 def test_preemptive_spoken_turn_stages_audex_asr_and_cfg_audio_before_submit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -510,6 +510,7 @@ class VllmSpeechToSpeechSession:
         input_wav_path: Path,
         play: bool = True,
         turn_submitted_at: float | None = None,
+        direct_audio_response: bool | None = None,
         pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
         text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
@@ -519,6 +520,7 @@ class VllmSpeechToSpeechSession:
                     input_wav_path=input_wav_path,
                     play=play,
                     turn_submitted_at=turn_submitted_at,
+                    direct_audio_response=direct_audio_response,
                     pcm_chunk_sink=pcm_chunk_sink,
                     text_delta_sink=text_delta_sink,
                 )
@@ -1052,13 +1054,19 @@ class VllmSpeechToSpeechSession:
         playback_start_gate: _PlaybackStartGate | None = None,
         staged_voice_revision: int | None = None,
         staged_sample_count: int | None = None,
+        direct_audio_response: bool | None = None,
         pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
         text_delta_sink: Callable[[str], None] | None = None,
     ) -> _PreparedSpokenTurn:
         if self.async_runtime is None:
             raise RuntimeError("Audex async vLLM runtime is not configured.")
 
-        if _direct_audio_response_enabled(thinking_enabled=self.thinking_enabled):
+        use_direct_audio_response = (
+            _direct_audio_response_enabled(thinking_enabled=self.thinking_enabled)
+            if direct_audio_response is None
+            else direct_audio_response and not self.thinking_enabled
+        )
+        if use_direct_audio_response:
             return await self._prepare_direct_audio_response_turn_async(
                 samples=samples,
                 sample_rate=sample_rate,
@@ -1420,6 +1428,7 @@ class VllmSpeechToSpeechSession:
         input_wav_path: Path,
         play: bool = True,
         turn_submitted_at: float | None = None,
+        direct_audio_response: bool | None = None,
         pcm_chunk_sink: Callable[[int, bytes], None] | None = None,
         text_delta_sink: Callable[[str], None] | None = None,
     ) -> SpeechToSpeechTurnResult:
@@ -1436,6 +1445,7 @@ class VllmSpeechToSpeechSession:
             samples=tuple(input_audio.samples),
             sample_rate=input_audio.sample_rate,
             play=play,
+            direct_audio_response=direct_audio_response,
             pcm_chunk_sink=pcm_chunk_sink,
             text_delta_sink=text_delta_sink,
         )
