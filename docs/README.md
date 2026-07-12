@@ -35,6 +35,9 @@ engineering and operating material lives here.
   auditioning, and a local capability catalog.
 - [Browser interface](engineering/browser-interface.md) — local HTTP/UI
   architecture, modes, cache identity, audio transport, and operating contract.
+- [Browser low-latency speech streaming](engineering/browser-low-latency-streaming.md)
+  — automatic incremental speech playback, live-turn events, PCM transport, and
+  verification contract.
 
 The stable implementation contract remains at [PATCH.md](../PATCH.md). 
 I try to describe there the kinds of changes required

@@ -4,6 +4,10 @@
 Audex/vLLM Metal runtime used by the CLI. The UI is dependency-free HTML, CSS,
 and JavaScript served by Python's standard-library HTTP server.
 
+The approved design for replacing completed-WAV playback with automatic
+incremental speech is documented in
+[Browser Low-Latency Speech Streaming](browser-low-latency-streaming.md).
+
 ## Modes
 
 | Mode | Model path | Conversation KV identity |
